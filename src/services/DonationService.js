@@ -21,8 +21,7 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const LimitService = require('./LimitService');
 const log = require('../utils/log');
 const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
-const { checkConfirmations } = require('../utils/confirmationChecker');
-const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
+const memoCollisionDetector = require('../utils/memoCollisionDetector');
 
 class DonationService {
   constructor(stellarService) {
@@ -357,7 +356,7 @@ class DonationService {
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
-  async createDonationRecord({ amount, donor, recipient, memo, idempotencyKey, receivedAmount }) {
+  async createDonationRecord({ amount, donor, recipient, memo, idempotencyKey, receivedAmount, sessionId }) {
     // Sanitize identifiers
     const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
     const sanitizedRecipient = sanitizeIdentifier(recipient);
@@ -409,6 +408,34 @@ class DonationService {
       overpaymentFlagged: overpayment ? true : false,
       overpaymentDetails: overpayment || null,
     });
+
+    // Detect memo collision after the record is created so we have a transactionId
+    const collisionResult = memoCollisionDetector.check({
+      memo: memoResult.sanitized,
+      donor: sanitizedDonor,
+      recipient: sanitizedRecipient,
+      amount,
+      sessionId: sessionId || null,
+      transactionId: transaction.id,
+    });
+
+    if (collisionResult.collision) {
+      transaction.memoCollision = true;
+      transaction.memoSuspicious = collisionResult.suspicious;
+      transaction.memoCollisionReason = collisionResult.reason;
+      // Persist the updated flags
+      const Transaction_ = require('../routes/models/transaction');
+      const all = Transaction_.loadTransactions();
+      const idx = all.findIndex(t => t.id === transaction.id);
+      if (idx !== -1) {
+        all[idx] = { ...all[idx], ...transaction };
+        Transaction_.saveTransactions(all);
+      }
+    } else {
+      transaction.memoCollision = false;
+      transaction.memoSuspicious = false;
+      transaction.memoCollisionReason = null;
+    }
 
     return transaction;
   }

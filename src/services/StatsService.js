@@ -378,7 +378,47 @@ class StatsService {
   }
 
   /**
-   * Get overpayment statistics across all transactions.
+   * Get memo collision statistics — flagged and suspicious transactions.
+   *
+   * @param {Date|null} [startDate]
+   * @param {Date|null} [endDate]
+   * @returns {{
+   *   totalCollisions: number,
+   *   totalSuspicious: number,
+   *   transactions: Array
+   * }}
+   */
+  static getMemoCollisionStats(startDate = null, endDate = null) {
+    const Transaction = require('../routes/models/transaction');
+    let transactions = Transaction.getAll();
+
+    if (startDate || endDate) {
+      transactions = transactions.filter(t => {
+        const ts = new Date(t.timestamp);
+        if (startDate && ts < startDate) return false;
+        if (endDate && ts > endDate) return false;
+        return true;
+      });
+    }
+
+    const collisions = transactions.filter(t => t.memoCollision === true);
+    const suspicious = collisions.filter(t => t.memoSuspicious === true);
+
+    return {
+      totalCollisions: collisions.length,
+      totalSuspicious: suspicious.length,
+      transactions: collisions.map(t => ({
+        id: t.id,
+        memo: t.memo,
+        donor: t.donor,
+        recipient: t.recipient,
+        amount: t.amount,
+        memoSuspicious: t.memoSuspicious,
+        memoCollisionReason: t.memoCollisionReason,
+        timestamp: t.timestamp,
+      })),
+    };
+  }
    * Reads from the JSON transaction store and aggregates flagged overpayments.
    *
    * @param {Date|null} [startDate] - Optional start of date range

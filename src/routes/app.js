@@ -25,6 +25,7 @@ const { attachUserRole } = require('../middleware/rbac');
 const abuseDetectionMiddleware = require('../middleware/abuseDetection');
 const replayDetectionMiddleware = require('../middleware/replayDetection');
 const Database = require('../utils/database');
+const HealthCheckService = require('../services/HealthCheckService');
 const { initializeApiKeysTable } = require('../models/apiKeys');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
@@ -83,27 +84,23 @@ app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
 app.use('/fees', feesRoutes);
 
-// Health check endpoint
+// Health check endpoints
 app.get('/health', async (req, res) => {
-  try {
-    await Database.get('SELECT 1 as ok');
-    return res.status(200).json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      dependencies: { database: 'ok' },
-      services: {
-        recurringDonations: recurringDonationScheduler.getStatus(),
-        reconciliation: reconciliationService.getStatus()
-      }
-    });
-  } catch (error) {
-    return res.status(503).json({
-      status: 'degraded',
-      timestamp: new Date().toISOString(),
-      dependencies: { database: 'error' },
-      error: error.message
-    });
-  }
+  const health = await HealthCheckService.getFullHealth(stellarService);
+  const httpStatus = health.status === 'unhealthy' ? 503 : 200;
+  return res.status(httpStatus).json(health);
+});
+
+// Liveness probe — returns 200 as long as the process is running
+app.get('/health/live', (req, res) => {
+  return res.status(200).json(HealthCheckService.getLiveness());
+});
+
+// Readiness probe — returns 200 only when all dependencies are healthy
+app.get('/health/ready', async (req, res) => {
+  const readiness = await HealthCheckService.getReadiness(stellarService);
+  const httpStatus = readiness.ready ? 200 : 503;
+  return res.status(httpStatus).json(readiness);
 });
 
 // Abuse detection stats endpoint (admin only)
