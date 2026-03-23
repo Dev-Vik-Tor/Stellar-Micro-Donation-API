@@ -18,6 +18,7 @@ const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
 const { validateSchema } = require('../middleware/schemaValidation');
+const { parseCursorPaginationQuery } = require('../utils/pagination');
 
 const walletService = new WalletService();
 const walletCreateSchema = validateSchema({
@@ -123,13 +124,18 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema
  * GET /wallets
  * Get all wallets
  */
-router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
+router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res, next) => {
   try {
-    const wallets = walletService.getAllWallets();
+    const pagination = parseCursorPaginationQuery(req.query);
+    const result = walletService.getPaginatedWallets(pagination);
+
+    res.setHeader('X-Total-Count', String(result.totalCount));
+
     res.json({
       success: true,
-      data: wallets,
-      count: wallets.length
+      data: result.data,
+      count: result.data.length,
+      meta: result.meta
     });
   } catch (error) {
     next(error);

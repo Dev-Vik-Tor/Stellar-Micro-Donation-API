@@ -18,6 +18,7 @@ const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
+const feesRoutes = require('./fees');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -31,7 +32,7 @@ const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
 const serviceContainer = require('../config/serviceContainer');
 const { payloadSizeLimiter } = require('../middleware/payloadSizeLimit');
-const { createCompressionMiddleware } = require('../middleware/compression');
+const { createCorsMiddleware } = require('../middleware/cors');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -50,11 +51,8 @@ let replayCleanupTimer = null;
 // Middleware
 app.use(requestId);
 
-// Response compression (Brotli / Gzip) — applied before routes so all JSON responses are eligible
-app.use(createCompressionMiddleware({
-  threshold: parseInt(process.env.COMPRESSION_THRESHOLD || '1024', 10),
-  level: parseInt(process.env.COMPRESSION_LEVEL || '6', 10),
-}));
+// CORS (must be before body parsers and route handlers)
+app.use(createCorsMiddleware());
 
 // Payload size limit (must be before body parsers)
 app.use(payloadSizeLimiter);
@@ -84,6 +82,7 @@ app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
 app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
+app.use('/fees', feesRoutes);
 
 // Health check endpoints
 app.get('/health', async (req, res) => {
@@ -126,6 +125,28 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
+// Idempotency stats endpoint (admin only)
+app.get('/admin/idempotency/stats', require('../middleware/rbac').requireAdmin(), async (req, res) => {
+  try {
+    const IdempotencyService = require('../services/IdempotencyService');
+    const stats = await IdempotencyService.getStats();
+    const oldest = await require('../utils/database').get(
+      `SELECT MIN(createdAt) as oldest FROM idempotency_keys WHERE datetime(expiresAt) > datetime('now')`
+    );
+    return res.json({
+      success: true,
+      data: {
+        ...stats,
+        oldestActiveKeyAge: oldest && oldest.oldest
+          ? Math.floor((Date.now() - new Date(oldest.oldest).getTime()) / 1000)
+          : null,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: { message: err.message } });
+  }
+});
+
 // Replay detection stats endpoint (admin only)
 app.get('/admin/replay-stats', require('../middleware/rbac').requireAdmin(), (req, res) => {
   try {
@@ -160,8 +181,36 @@ app.get('/admin/replay-stats', require('../middleware/rbac').requireAdmin(), (re
   }
 });
 
+// Audit logs endpoint (admin only)
+app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+  try {
+    const pagination = parseCursorPaginationQuery(req.query);
+    const filters = {
+      category: req.query.category,
+      action: req.query.action,
+      severity: req.query.severity,
+      userId: req.query.userId,
+      requestId: req.query.requestId,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+    };
+
+    const result = await AuditLogService.queryPaginated(filters, pagination);
+
+    res.setHeader('X-Total-Count', String(result.totalCount));
+    res.json({
+      success: true,
+      data: result.data,
+      count: result.data.length,
+      meta: result.meta
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Manual reconciliation trigger (admin only)
-app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res) => {
+app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
   try {
     if (reconciliationService.reconciliationInProgress) {
       return res.status(409).json({
@@ -169,13 +218,54 @@ app.post('/reconcile', require('../middleware/rbac').requireAdmin(), async (req,
         error: 'Reconciliation already in progress'
       });
     }
-    // Trigger reconciliation without waiting
-    reconciliationService.reconcile().catch(error => {
-      log.error('APP', 'Manual reconciliation failed', { error: error.message });
-    });
+    // Trigger reconciliation and wait for result
+    const result = await reconciliationService.reconcile();
     res.json({
       success: true,
-      message: 'Reconciliation started',
+      message: 'Reconciliation complete',
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Admin reconcile endpoint (canonical path)
+app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+  try {
+    if (reconciliationService.reconciliationInProgress) {
+      return res.status(409).json({
+        success: false,
+        error: 'Reconciliation already in progress'
+      });
+    }
+    const result = await reconciliationService.reconcile();
+    res.json({
+      success: true,
+      message: 'Reconciliation complete',
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Orphaned transactions stats (admin only)
+app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+  try {
+    const rows = await Database.query(
+      'SELECT id, senderId, receiverId, amount, memo, timestamp, stellar_tx_id FROM transactions WHERE is_orphan = 1 ORDER BY timestamp DESC',
+      []
+    );
+    res.json({
+      success: true,
+      data: {
+        count: rows.length,
+        transactions: rows,
+        lifetimeDetected: reconciliationService.getOrphanedTransactionCount(),
+      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {

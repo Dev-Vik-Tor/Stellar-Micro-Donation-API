@@ -13,6 +13,7 @@ const Wallet = require('../routes/models/wallet');
 const Database = require('../utils/database');
 const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { paginateCollection } = require('../utils/pagination');
 
 class WalletService {
   /**
@@ -55,6 +56,22 @@ class WalletService {
    */
   getAllWallets() {
     return Wallet.getAll();
+  }
+
+  /**
+   * Get wallets using cursor-based pagination.
+   * @param {Object} pagination - Pagination options.
+   * @param {{ timestamp: string, id: string }|null} pagination.cursor - Decoded cursor.
+   * @param {number} pagination.limit - Page size.
+   * @param {string} pagination.direction - Pagination direction.
+   * @returns {{ data: Array, totalCount: number, meta: Object }} Paginated wallets.
+   */
+  getPaginatedWallets(pagination) {
+    return paginateCollection(Wallet.getAll(), {
+      ...pagination,
+      timestampField: 'createdAt',
+      idField: 'id',
+    });
   }
 
   /**

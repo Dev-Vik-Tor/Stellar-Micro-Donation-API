@@ -145,7 +145,7 @@ describe('API Response Contract Tests', () => {
 
   test('POST /donations success response matches contract', async () => {
     const response = await request(app)
-      .post('/donations')
+      .post('/api/v1/donations')
       .set('X-API-Key', 'test-key-1')
       .set('X-Idempotency-Key', 'idem-contract-001')
       .send({
@@ -163,7 +163,7 @@ describe('API Response Contract Tests', () => {
 
   test('POST /donations validation error response matches contract', async () => {
     const response = await request(app)
-      .post('/donations')
+      .post('/api/v1/donations')
       .set('X-API-Key', 'test-key-1')
       .set('X-Idempotency-Key', 'idem-contract-002')
       .send({
@@ -178,7 +178,7 @@ describe('API Response Contract Tests', () => {
 
   test('GET /donations success response matches contract', async () => {
     const response = await request(app)
-      .get('/donations')
+      .get('/api/v1/donations')
       .set('X-API-Key', 'test-key-1');
 
     expect(response.status).toBe(200);
@@ -196,7 +196,7 @@ describe('API Response Contract Tests', () => {
     });
 
     const response = await request(app)
-      .post('/donations/verify')
+      .post('/api/v1/donations/verify')
       .set('X-API-Key', 'test-key-1')
       .send({
         transactionHash: 'tx_missing',
@@ -210,7 +210,7 @@ describe('API Response Contract Tests', () => {
 
   test('POST /donations authentication error response matches contract', async () => {
     const response = await request(app)
-      .post('/donations')
+      .post('/api/v1/donations')
       .set('X-Idempotency-Key', 'idem-contract-003')
       .send({
         amount: '10',

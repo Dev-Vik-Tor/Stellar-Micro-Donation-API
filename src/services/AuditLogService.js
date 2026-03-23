@@ -14,6 +14,11 @@ const log = require('../utils/log');
 const crypto = require('crypto');
 const { sanitizeForLogging } = require('../utils/sanitizer');
 const { maskSensitiveData } = require('../utils/dataMasker');
+const { ValidationError, ERROR_CODES } = require('../utils/errors');
+const {
+  buildCursorWhereClause,
+  buildCursorMeta,
+} = require('../utils/pagination');
 
 /**
  * Audit event severity levels
@@ -85,6 +90,94 @@ const AUDIT_ACTION = {
 };
 
 class AuditLogService {
+  /**
+   * Build the SQL filter clause for audit log queries.
+   * @param {Object} filters - Query filters.
+   * @returns {{ clause: string, params: Array }} SQL clause fragment and parameters.
+   */
+  static buildFilterQuery(filters = {}) {
+    const {
+      category,
+      action,
+      severity,
+      userId,
+      requestId,
+      startDate,
+      endDate
+    } = filters;
+
+    let query = ' FROM audit_logs WHERE 1=1';
+    const params = [];
+
+    if (category) {
+      query += ' AND category = ?';
+      params.push(category);
+    }
+
+    if (action) {
+      query += ' AND action = ?';
+      params.push(action);
+    }
+
+    if (severity) {
+      query += ' AND severity = ?';
+      params.push(severity);
+    }
+
+    if (userId) {
+      query += ' AND userId = ?';
+      params.push(userId);
+    }
+
+    if (requestId) {
+      query += ' AND requestId = ?';
+      params.push(requestId);
+    }
+
+    if (startDate) {
+      query += ' AND timestamp >= ?';
+      params.push(startDate);
+    }
+
+    if (endDate) {
+      query += ' AND timestamp <= ?';
+      params.push(endDate);
+    }
+
+    return { clause: query, params };
+  }
+
+  /**
+   * Parse JSON details for audit log rows.
+   * @param {Object[]} rows - Raw database rows.
+   * @returns {Object[]} Parsed audit log entries.
+   */
+  static parseRows(rows) {
+    return rows.map(row => ({
+      ...row,
+      details: JSON.parse(row.details || '{}')
+    }));
+  }
+
+  /**
+   * Validate that a cursor belongs to the filtered audit log result set.
+   * @param {Object} filters - Query filters.
+   * @param {{ timestamp: string, id: string }|null} cursor - Decoded cursor.
+   * @returns {Promise<boolean>} True when the cursor matches a filtered row.
+   */
+  static async cursorExists(filters = {}, cursor = null) {
+    if (!cursor) {
+      return true;
+    }
+
+    const filterQuery = this.buildFilterQuery(filters);
+    const row = await db.get(
+      `SELECT id${filterQuery.clause} AND timestamp = ? AND id = ? LIMIT 1`,
+      [...filterQuery.params, cursor.timestamp, cursor.id]
+    );
+
+    return Boolean(row);
+  }
   /**
    * Log a security-sensitive operation
    * @param {Object} params - Audit log parameters
@@ -255,65 +348,17 @@ class AuditLogService {
   static async query(filters = {}) {
     try {
       const {
-        category,
-        action,
-        severity,
-        userId,
-        requestId,
-        startDate,
-        endDate,
         limit = 100,
-        offset = 0
+        offset = 0,
+        ...queryFilters
       } = filters;
+      const filterQuery = this.buildFilterQuery(queryFilters);
+      const rows = await db.all(
+        `SELECT *${filterQuery.clause} ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
+        [...filterQuery.params, limit, offset]
+      );
 
-      let query = 'SELECT * FROM audit_logs WHERE 1=1';
-      const params = [];
-
-      if (category) {
-        query += ' AND category = ?';
-        params.push(category);
-      }
-
-      if (action) {
-        query += ' AND action = ?';
-        params.push(action);
-      }
-
-      if (severity) {
-        query += ' AND severity = ?';
-        params.push(severity);
-      }
-
-      if (userId) {
-        query += ' AND userId = ?';
-        params.push(userId);
-      }
-
-      if (requestId) {
-        query += ' AND requestId = ?';
-        params.push(requestId);
-      }
-
-      if (startDate) {
-        query += ' AND timestamp >= ?';
-        params.push(startDate);
-      }
-
-      if (endDate) {
-        query += ' AND timestamp <= ?';
-        params.push(endDate);
-      }
-
-      query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-      params.push(limit, offset);
-
-      const rows = await db.all(query, params);
-
-      // Parse JSON details
-      return rows.map(row => ({
-        ...row,
-        details: JSON.parse(row.details || '{}')
-      }));
+      return this.parseRows(rows);
     } catch (error) {
       log.error('AUDIT_SERVICE', 'Failed to query audit logs', {
         error: error.message,
@@ -321,6 +366,68 @@ class AuditLogService {
       });
       throw error;
     }
+  }
+
+  /**
+   * Query audit logs using cursor-based pagination.
+   * @param {Object} filters - Query filters.
+   * @param {Object} pagination - Pagination options.
+   * @param {{ timestamp: string, id: string }|null} pagination.cursor - Decoded cursor.
+   * @param {number} pagination.limit - Page size.
+   * @param {string} pagination.direction - Pagination direction.
+   * @returns {Promise<{ data: Array, totalCount: number, meta: Object }>} Paginated results.
+   */
+  static async queryPaginated(filters = {}, pagination = {}) {
+    const {
+      cursor = null,
+      limit = 20,
+      direction = 'next',
+    } = pagination;
+
+    const filterQuery = this.buildFilterQuery(filters);
+    const totalRow = await db.get(
+      `SELECT COUNT(*) as total${filterQuery.clause}`,
+      filterQuery.params
+    );
+
+    const cursorIsValid = await this.cursorExists(filters, cursor);
+    if (!cursorIsValid) {
+      throw new ValidationError('Invalid cursor parameter', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const cursorWhere = buildCursorWhereClause({
+      cursor,
+      direction,
+      timestampColumn: 'timestamp',
+      idColumn: 'id',
+    });
+
+    const orderBy = direction === 'prev'
+      ? ' ORDER BY timestamp ASC, id ASC'
+      : ' ORDER BY timestamp DESC, id DESC';
+
+    const rows = await db.all(
+      `SELECT *${filterQuery.clause}${cursorWhere.clause}${orderBy} LIMIT ?`,
+      [...filterQuery.params, ...cursorWhere.params, limit + 1]
+    );
+
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const normalizedRows = direction === 'prev' ? [...pageRows].reverse() : pageRows;
+
+    return {
+      data: this.parseRows(normalizedRows),
+      totalCount: totalRow ? totalRow.total : 0,
+      meta: buildCursorMeta({
+        items: normalizedRows,
+        limit,
+        direction,
+        hasMore,
+        hasCursor: Boolean(cursor),
+        timestampField: 'timestamp',
+        idField: 'id',
+      }),
+    };
   }
 
   /**
