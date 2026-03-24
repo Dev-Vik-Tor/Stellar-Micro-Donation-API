@@ -24,13 +24,16 @@ class WalletService {
   /**
    * Create a new wallet with metadata.
    * On testnet, automatically funds the new account via Friendbot.
+   * If sponsored=true and SPONSOR_SECRET is configured, uses platform sponsorship
+   * so the new account requires no XLM for base reserve.
    * @param {Object} params
    * @param {string} params.address - Wallet address (Stellar public key)
    * @param {string} [params.label]
    * @param {string} [params.ownerName]
-   * @returns {Promise<Object>} Created wallet with `funded` field
+   * @param {boolean} [params.sponsored=false] - Create via platform sponsorship
+   * @returns {Promise<Object>} Created wallet with `funded` and `sponsored` fields
    */
-  async createWallet({ address, label, ownerName }) {
+  async createWallet({ address, label, ownerName, sponsored = false }) {
     if (!address) {
       throw new ValidationError('Missing required field: address', null, ERROR_CODES.MISSING_REQUIRED_FIELD);
     }
@@ -51,25 +54,39 @@ class WalletService {
     const sanitizedOwnerName = ownerName ? sanitizeName(ownerName) : null;
 
     const wallet = Wallet.create({
-      address,
+      address: sanitizedAddress,
       label: sanitizedLabel,
       ownerName: sanitizedOwnerName
     });
 
-    // Auto-fund on testnet via Friendbot
+    // Auto-fund on testnet via Friendbot, or use platform sponsorship
     let funded = false;
+    let isSponsored = false;
     if (this.stellarService) {
-      const fundResult = await this.stellarService.fundWithFriendbot(address);
-      funded = fundResult.funded;
-      if (!funded) {
-        log.warn('WALLET_SERVICE', 'Friendbot funding skipped or failed', {
-          address,
-          reason: fundResult.error || 'non-testnet network'
-        });
+      if (sponsored && process.env.SPONSOR_SECRET) {
+        try {
+          await this.stellarService.createSponsoredAccount(process.env.SPONSOR_SECRET, address);
+          isSponsored = true;
+          funded = true;
+        } catch (err) {
+          log.warn('WALLET_SERVICE', 'Sponsored account creation failed, falling back to Friendbot', {
+            address, error: err.message
+          });
+        }
+      }
+      if (!isSponsored) {
+        const fundResult = await this.stellarService.fundWithFriendbot(address);
+        funded = fundResult.funded;
+        if (!funded) {
+          log.warn('WALLET_SERVICE', 'Friendbot funding skipped or failed', {
+            address,
+            reason: fundResult.error || 'non-testnet network'
+          });
+        }
       }
     }
 
-    return { ...wallet, funded };
+    return { ...wallet, funded, sponsored: isSponsored };
   }
 
   /**
@@ -244,6 +261,33 @@ class WalletService {
     Cache.set(cacheKey, liveBalance, cacheTtl);
 
     return { ...liveBalance, cached: false };
+  }
+  /**
+   * Revoke platform sponsorship for a wallet.
+   * Requires SPONSOR_SECRET to be configured.
+   * @param {string} id - Wallet ID
+   * @returns {Promise<Object>} Result with revoked flag and transactionId
+   * @throws {ValidationError} If SPONSOR_SECRET is not configured
+   * @throws {NotFoundError} If wallet not found
+   */
+  async revokeSponsoredAccount(id) {
+    const wallet = this.getWalletById(id);
+
+    if (!process.env.SPONSOR_SECRET) {
+      throw new ValidationError('SPONSOR_SECRET is not configured', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    const result = await this.stellarService.revokeSponsoredAccount(
+      process.env.SPONSOR_SECRET,
+      wallet.address
+    );
+
+    Wallet.update(id, { sponsored: false, sponsorshipRevokedAt: new Date().toISOString() });
+
+    return result;
   }
 }
 

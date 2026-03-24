@@ -36,6 +36,7 @@ const walletCreateSchema = validateSchema({
       },
       label: { type: 'string', required: false, maxLength: 255, nullable: true },
       ownerName: { type: 'string', required: false, maxLength: 255, nullable: true },
+      sponsored: { type: 'boolean', required: false, nullable: true },
     },
   },
 });
@@ -90,9 +91,9 @@ const walletPublicKeySchema = validateSchema({
 router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res) => {
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, async (req, res, next) => {
   try {
-    const { address, label, ownerName } = req.body;
+    const { address, label, ownerName, sponsored } = req.body;
 
-    const wallet = await walletService.createWallet({ address, label, ownerName });
+    const wallet = await walletService.createWallet({ address, label, ownerName, sponsored: !!sponsored });
 
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.WALLET_OPERATION,
@@ -334,6 +335,33 @@ router.patch('/:id/limits', requireAdmin(), async (req, res, next) => {
     });
 
     res.json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /wallets/:id/revoke-sponsorship
+ * Revoke platform sponsorship for a wallet.
+ * Requires SPONSOR_SECRET to be configured in environment.
+ */
+router.post('/:id/revoke-sponsorship', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+  try {
+    const result = await walletService.revokeSponsoredAccount(req.params.id);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'SPONSORSHIP_REVOKED',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}/revoke-sponsorship`,
+      details: { walletId: req.params.id }
+    });
+
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

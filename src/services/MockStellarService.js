@@ -918,6 +918,7 @@ class MockStellarService extends StellarServiceInterface {
     this.streamListeners.clear();
     if (this.claimableBalances) this.claimableBalances.clear();
     if (this.offers) this.offers.clear();
+    if (this.sponsorships) this.sponsorships.clear();
   }
 
   /**
@@ -1246,6 +1247,87 @@ class MockStellarService extends StellarServiceInterface {
       base: { asset_type: sellingAsset === 'XLM' ? 'native' : 'credit_alphanum4', asset_code: sellingAsset },
       counter: { asset_type: buyingAsset === 'XLM' ? 'native' : 'credit_alphanum4', asset_code: buyingAsset },
     };
+  }
+
+  /**
+   * Create a sponsored account in the mock service.
+   *
+   * @param {string} sponsorSecret    - Secret key of the sponsoring account
+   * @param {string} newAccountPublic - Public key of the new account to sponsor
+   * @returns {Promise<{transactionId: string, ledger: number, sponsored: true}>}
+   */
+  async createSponsoredAccount(sponsorSecret, newAccountPublic) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+    this._validateSecretKey(sponsorSecret);
+    this._validatePublicKey(newAccountPublic);
+
+    const sponsorPublic = this._secretToPublic(sponsorSecret);
+    if (!this.wallets.has(sponsorPublic)) {
+      throw new NotFoundError('Sponsor account not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+    if (this.wallets.has(newAccountPublic)) {
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Account already exists');
+    }
+
+    // Create the new account with zero balance — sponsor covers the reserve
+    this.wallets.set(newAccountPublic, {
+      publicKey: newAccountPublic,
+      balance: '0.0000000',
+      sponsored: true,
+      sponsoredBy: sponsorPublic,
+      createdAt: new Date().toISOString(),
+      sequence: '0',
+    });
+    this.transactions.set(newAccountPublic, []);
+
+    if (!this.sponsorships) this.sponsorships = new Map();
+    this.sponsorships.set(newAccountPublic, { sponsor: sponsorPublic, revokedAt: null });
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { transactionId: txId, ledger, sponsored: true };
+  }
+
+  /**
+   * Revoke sponsorship for an account in the mock service.
+   *
+   * @param {string} sponsorSecret   - Secret key of the current sponsor
+   * @param {string} sponsoredPublic - Public key of the sponsored account
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   */
+  async revokeSponsoredAccount(sponsorSecret, sponsoredPublic) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+    this._validateSecretKey(sponsorSecret);
+    this._validatePublicKey(sponsoredPublic);
+
+    const sponsorPublic = this._secretToPublic(sponsorSecret);
+    if (!this.wallets.has(sponsorPublic)) {
+      throw new NotFoundError('Sponsor account not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    if (!this.sponsorships) this.sponsorships = new Map();
+    const record = this.sponsorships.get(sponsoredPublic);
+    if (!record) {
+      throw new NotFoundError('No sponsorship record found for this account', ERROR_CODES.NOT_FOUND);
+    }
+    if (record.sponsor !== sponsorPublic) {
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Account is not sponsored by this sponsor');
+    }
+    if (record.revokedAt) {
+      throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'Sponsorship already revoked');
+    }
+
+    record.revokedAt = new Date().toISOString();
+    const wallet = this.wallets.get(sponsoredPublic);
+    if (wallet) { wallet.sponsored = false; wallet.sponsoredBy = null; }
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { transactionId: txId, ledger, revoked: true };
   }
 
   /**

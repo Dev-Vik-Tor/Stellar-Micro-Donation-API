@@ -776,6 +776,86 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Create a sponsored account on the Stellar network.
+   *
+   * Uses the Begin/End Sponsoring Future Reserves operation pair so the sponsor
+   * pays the base reserve for the new account.  The new account must co-sign
+   * the transaction.
+   *
+   * @param {string} sponsorSecret      - Secret key of the sponsoring account
+   * @param {string} newAccountPublic   - Public key of the account to be created
+   * @returns {Promise<{transactionId: string, ledger: number, sponsored: true}>}
+   */
+  async createSponsoredAccount(sponsorSecret, newAccountPublic) {
+    return StellarErrorHandler.wrap(async () => {
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const newKeypair = StellarSdk.Keypair.fromPublicKey(newAccountPublic);
+
+      const sponsorAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sponsorKeypair.publicKey()),
+        'loadSponsorAccount'
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(sponsorAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.beginSponsoringFutureReserves({
+          sponsoredId: newAccountPublic,
+        }))
+        .addOperation(StellarSdk.Operation.createAccount({
+          destination: newAccountPublic,
+          startingBalance: '0',
+        }))
+        .addOperation(StellarSdk.Operation.endSponsoringFutureReserves({
+          source: newAccountPublic,
+        }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(sponsorKeypair);
+      tx.sign(newKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      return { transactionId: result.hash, ledger: result.ledger, sponsored: true };
+    }, 'createSponsoredAccount');
+  }
+
+  /**
+   * Revoke sponsorship for an account entry.
+   *
+   * Submits a RevokeSponsorshipOperation targeting the account ledger entry.
+   * After revocation the account must maintain its own base reserve.
+   *
+   * @param {string} sponsorSecret    - Secret key of the current sponsor
+   * @param {string} sponsoredPublic  - Public key of the sponsored account
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   */
+  async revokeSponsoredAccount(sponsorSecret, sponsoredPublic) {
+    return StellarErrorHandler.wrap(async () => {
+      const sponsorKeypair = StellarSdk.Keypair.fromSecret(sponsorSecret);
+      const sponsorAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sponsorKeypair.publicKey()),
+        'loadSponsorForRevoke'
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(sponsorAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.revokeAccountSponsorship({
+          account: sponsoredPublic,
+        }))
+        .setTimeout(30)
+        .build();
+
+      tx.sign(sponsorKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      return { transactionId: result.hash, ledger: result.ledger, revoked: true };
+    }, 'revokeSponsoredAccount');
+  }
+
+  /**
    * Claim a claimable balance.
    *
    * @param {Object} params
