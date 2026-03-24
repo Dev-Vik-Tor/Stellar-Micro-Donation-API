@@ -71,6 +71,7 @@ async function checkStellar(stellarService) {
   return {
     ...result,
     network: stellarService.getNetwork ? stellarService.getNetwork() : undefined,
+    environment: stellarService.getEnvironment ? stellarService.getEnvironment().name : undefined,
     horizonUrl: stellarService.getHorizonUrl ? stellarService.getHorizonUrl() : undefined,
   };
 }
