@@ -19,6 +19,7 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const WalletService = require('../services/WalletService');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
+const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 
 const walletService = new WalletService();
 const walletCreateSchema = validateSchema({
@@ -84,7 +85,7 @@ const walletPublicKeySchema = validateSchema({
  * POST /wallets
  * Create a new wallet with metadata
  */
-router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, (req, res) => {
+router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema, (req, res, next) => {
   try {
     const { address, label, ownerName } = req.body;
 
@@ -94,22 +95,8 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema
       });
     }
 
-    const existingWallet = Wallet.getByAddress(address);
-    if (existingWallet) {
-      return res.status(409).json({
-        error: 'Wallet with this address already exists'
-      });
-    }
-
-    // Sanitize user-provided metadata
-    const sanitizedLabel = label ? sanitizeLabel(label) : null;
-    const sanitizedOwnerName = ownerName ? sanitizeName(ownerName) : null;
-
-    const wallet = Wallet.create({
-      address,
-      label: sanitizedLabel,
-      ownerName: sanitizedOwnerName
-    });
+    // Use WalletService which applies comprehensive sanitization
+    const wallet = walletService.createWallet({ address, label, ownerName });
 
     res.status(201).json({
       success: true,
@@ -192,7 +179,7 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, (r
  * PATCH /wallets/:id
  * Update wallet metadata
  */
-router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, (req, res) => {
+router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSchema, (req, res, next) => {
   try {
     const { label, ownerName } = req.body;
 
@@ -202,18 +189,8 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
       });
     }
 
-    // Sanitize user-provided metadata
-    const updates = {};
-    if (label !== undefined) updates.label = sanitizeLabel(label);
-    if (ownerName !== undefined) updates.ownerName = sanitizeName(ownerName);
-
-    const wallet = Wallet.update(req.params.id, updates);
-
-    if (!wallet) {
-      return res.status(404).json({
-        error: 'Wallet not found'
-      });
-    }
+    // Use WalletService which applies comprehensive sanitization
+    const wallet = walletService.updateWallet(req.params.id, { label, ownerName });
 
     res.json({
       success: true,
