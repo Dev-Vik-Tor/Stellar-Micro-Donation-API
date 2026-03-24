@@ -17,7 +17,7 @@ const { checkPermission } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const log = require('../utils/log');
-const { donationRateLimiter, verificationRateLimiter } = require('../middleware/rateLimiter');
+const { donationRateLimiter, verificationRateLimiter, batchRateLimiter } = require('../middleware/rateLimiter');
 const { validateRequiredFields, validateFloat, validateInteger } = require('../utils/validationHelpers');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
@@ -276,6 +276,56 @@ router.post('/send', donationRateLimiter, requireIdempotency, sendDonationSchema
       error: 'Failed to send donation',
       message: error.message
     });
+  }
+});
+
+/**
+ * POST /donations/batch
+ * Create up to 100 donations in a single request.
+ * Donations with the same donor are grouped into multi-operation Stellar transactions.
+ * Rate limited: 10 batch requests per minute per IP.
+ */
+router.post('/batch', batchRateLimiter, requireApiKey, async (req, res, next) => {
+  try {
+    const { donations } = req.body;
+
+    if (!Array.isArray(donations) || donations.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'donations must be a non-empty array' }
+      });
+    }
+
+    if (donations.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'donations array must not exceed 100 items' }
+      });
+    }
+
+    // Basic per-item validation
+    for (let i = 0; i < donations.length; i++) {
+      const d = donations[i];
+      if (!d.amount || !d.recipient) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'VALIDATION_ERROR', message: `donations[${i}]: amount and recipient are required` }
+        });
+      }
+    }
+
+    const results = await donationService.processBatch(donations);
+
+    const succeeded = results.filter(r => r.success).length;
+    const failed = results.length - succeeded;
+
+    res.status(207).json({
+      success: true,
+      summary: { total: results.length, succeeded, failed },
+      results
+    });
+  } catch (error) {
+    next(error);
   }
 });
 

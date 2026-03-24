@@ -95,6 +95,8 @@ app.get('/exchange-rates', async (req, res) => {
         base: 'XLM',
         rates,
         supportedCurrencies: ['XLM', ...priceOracle.SUPPORTED_CURRENCIES.map(c => c.toUpperCase())],
+        cachedAt: new Date().toISOString(),
+      },
         cachedAt: new Date().toISOString()
       }
     });
@@ -102,6 +104,11 @@ app.get('/exchange-rates', async (req, res) => {
     log.error('APP', 'Failed to fetch exchange rates', { error: err.message });
     res.status(503).json({
       success: false,
+      error: { code: 'EXCHANGE_RATE_UNAVAILABLE', message: err.message },
+    });
+  }
+});
+
       error: { code: 'EXCHANGE_RATE_UNAVAILABLE', message: err.message }
     });
   }

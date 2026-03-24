@@ -620,6 +620,21 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Send multiple payments from the same source in a single mock batch transaction.
+   * @param {string} sourceSecret
+   * @param {Array<{destinationPublic: string, amount: string}>} payments
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async sendBatchDonations(sourceSecret, payments) {
+    // Reuse sendDonation for each payment sequentially in mock mode
+    let lastResult;
+    for (const p of payments) {
+      lastResult = await this.sendDonation({ sourceSecret, destinationPublic: p.destinationPublic, amount: p.amount, memo: p.memo });
+    }
+    return { transactionId: lastResult.transactionId, ledger: lastResult.ledger };
+  }
+
+  /**
    * Get mock transaction history
    * @param {string} publicKey - Stellar public key
    * @param {number} limit - Number of transactions to retrieve

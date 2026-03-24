@@ -323,6 +323,41 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Send multiple payments from the same source in a single multi-operation transaction.
+   * @param {string} sourceSecret - Source account secret key
+   * @param {Array<{destinationPublic: string, amount: string, memo?: string}>} payments
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async sendBatchDonations(sourceSecret, payments) {
+    return StellarErrorHandler.wrap(async () => {
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const sourceAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForBatch'
+      );
+
+      const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase: this.network === 'public' ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET,
+      }).setTimeout(30);
+
+      for (const p of payments) {
+        builder.addOperation(StellarSdk.Operation.payment({
+          destination: p.destinationPublic,
+          asset: StellarSdk.Asset.native(),
+          amount: p.amount.toString(),
+        }));
+      }
+
+      const builtTx = builder.build();
+      builtTx.sign(sourceKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(builtTx);
+      return { transactionId: result.hash, ledger: result.ledger };
+    }, 'sendBatchDonations');
+  }
+
+  /**
    * Get transaction history for an account
    * @param {string} publicKey - Stellar public key
    * @param {number} limit - Number of transactions to retrieve
