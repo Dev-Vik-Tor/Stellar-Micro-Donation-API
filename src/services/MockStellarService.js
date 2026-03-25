@@ -229,6 +229,13 @@ class MockStellarService extends StellarServiceInterface {
           { retryable: true, retryAfter: 5000 }
         );
 
+      case 'fee_bump_failure':
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'Fee bump transaction failed: the inner transaction has already been applied or the fee is still too low.',
+          { retryable: false }
+        );
+
       default:
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
@@ -643,6 +650,8 @@ class MockStellarService extends StellarServiceInterface {
         ledger: transaction.ledger,
         status: transaction.status,
         confirmedAt: transaction.confirmedAt,
+        envelopeXdr: 'mock_envelope_' + crypto.randomBytes(8).toString('hex'),
+        fee: 100,
       };
     });
   }
@@ -1128,6 +1137,46 @@ class MockStellarService extends StellarServiceInterface {
       baseFee: BASE_FEE_STROOPS,
       surgeProtection,
       surgeMultiplier: parseFloat(multiplier.toFixed(2)),
+    };
+  }
+
+  /**
+   * Mock implementation of fee bump transaction.
+   * @param {string} envelopeXdr - Original transaction envelope XDR (not validated in mock)
+   * @param {number} newFeeStroops - New fee in stroops
+   * @param {string} feeSourceSecret - Fee source secret key (validated for format only)
+   * @returns {Promise<{hash: string, ledger: number, fee: number, envelopeXdr: string}>}
+   */
+  async buildAndSubmitFeeBumpTransaction(envelopeXdr, newFeeStroops, feeSourceSecret) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    if (!envelopeXdr) {
+      throw new ValidationError('envelopeXdr is required');
+    }
+    if (!newFeeStroops || newFeeStroops < 100) {
+      throw new ValidationError('newFeeStroops must be at least 100 (base fee)');
+    }
+    if (feeSourceSecret) {
+      this._validateSecretKey(feeSourceSecret);
+    }
+
+    const hash = 'mock_feebump_' + crypto.randomBytes(16).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+    log.info('MOCK_STELLAR_SERVICE', 'Fee bump transaction submitted', {
+      originalEnvelopeLength: envelopeXdr.length,
+      newFeeStroops,
+      hash,
+      ledger,
+    });
+
+    return {
+      hash,
+      ledger,
+      fee: newFeeStroops,
+      envelopeXdr: 'mock_feebump_envelope_' + crypto.randomBytes(8).toString('hex'),
     };
   }
 
