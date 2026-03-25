@@ -29,6 +29,7 @@ const log = require('../utils/log');
 const priceOracle = require('./PriceOracleService');
 const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
 const memoCollisionDetector = require('../utils/memoCollisionDetector');
+const { paginateCollection } = require('../utils/pagination');
 
 class DonationService {
   constructor(stellarService) {
@@ -147,6 +148,12 @@ class DonationService {
       'INSERT INTO transactions (senderId, receiverId, amount, memo, notes, tags, timestamp, idempotencyKey, stellar_tx_id) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
       [senderId, receiverId, amount, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
     );
+
+    if (campaign_id) {
+      await this.processCampaignContribution(campaign_id, amount).catch(err => {
+        log.error('DONATION_SERVICE', 'Failed to update campaign contribution', { error: err.message });
+      });
+    }
 
     // Record in JSON with state transitions
     const transaction = Transaction.create({
@@ -369,7 +376,6 @@ class DonationService {
    * @param {string} params.donor - Donor identifier
    * @param {string} params.recipient - Recipient identifier
    * @param {string} params.memo - Optional memo
-   * @param {string} [params.memoType='text'] - Stellar memo type: 'text', 'hash', 'id', or 'return'
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
@@ -459,7 +465,14 @@ class DonationService {
       // Overpayment fields (null when no overpayment)
       overpaymentFlagged: overpayment ? true : false,
       overpaymentDetails: overpayment || null,
+      campaign_id: campaign_id || null
     });
+
+    if (campaign_id) {
+      await this.processCampaignContribution(campaign_id, xlmAmount).catch(err => {
+        log.error('DONATION_SERVICE', 'Failed to update campaign contribution', { error: err.message });
+      });
+    }
 
     // Detect memo collision after the record is created so we have a transactionId
     const collisionResult = memoCollisionDetector.check({
@@ -490,6 +503,37 @@ class DonationService {
     }
 
     return transaction;
+  }
+
+  /**
+   * Update campaign progress and trigger Webhooks if goal met
+   */
+  async processCampaignContribution(campaignId, amount) {
+    const WebhookService = require('./WebhookService');
+    const updateResult = await Database.run(
+      `UPDATE campaigns 
+       SET current_amount = current_amount + ? 
+       WHERE id = ? AND status = 'active'`,
+      [amount, campaignId]
+    );
+
+    if (updateResult && updateResult.changes > 0) {
+      const campaign = await Database.get('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+      
+      if (campaign && campaign.current_amount >= campaign.goal_amount) {
+        await Database.run(`UPDATE campaigns SET status = 'completed' WHERE id = ?`, [campaignId]);
+        
+        await WebhookService.deliver('campaign.completed', {
+          campaign_id: campaignId,
+          name: campaign.name,
+          goal_amount: campaign.goal_amount,
+          final_amount: campaign.current_amount,
+          completed_at: new Date().toISOString()
+        });
+        
+        log.info('CAMPAIGN', `Campaign ${campaignId} reached its goal and is now completed`);
+      }
+    }
   }
 
   /**
@@ -584,12 +628,120 @@ class DonationService {
   }
 
   /**
-   * Get donations using cursor-based pagination.
+   * Apply search/filter criteria to a list of transactions.
+   * All parameters are optional and combinable.
+   *
+   * @param {Object[]} transactions - Source transaction array.
+   * @param {Object} filters - Filter options.
+   * @param {string} [filters.startDate] - ISO date string; include transactions on or after this date.
+   * @param {string} [filters.endDate] - ISO date string; include transactions on or before this date.
+   * @param {number} [filters.minAmount] - Minimum donation amount (inclusive).
+   * @param {number} [filters.maxAmount] - Maximum donation amount (inclusive).
+   * @param {string} [filters.status] - Exact status match.
+   * @param {string} [filters.donor] - Case-insensitive substring match on donor field.
+   * @param {string} [filters.recipient] - Case-insensitive substring match on recipient field.
+   * @param {string} [filters.memo] - Case-insensitive full-text search on memo field.
+   * @param {string} [filters.sortBy='timestamp'] - Field to sort by: 'timestamp', 'amount', or 'status'.
+   * @param {string} [filters.order='desc'] - Sort order: 'asc' or 'desc'.
+   * @returns {Object[]} Filtered and sorted transactions.
+   */
+  applyFilters(transactions, filters = {}) {
+    const {
+      startDate, endDate,
+      minAmount, maxAmount,
+      status, donor, recipient, memo,
+      sortBy = 'timestamp', order = 'desc',
+    } = filters;
+
+    const VALID_SORT_FIELDS = ['timestamp', 'amount', 'status'];
+    const VALID_ORDERS = ['asc', 'desc'];
+
+    if (sortBy && !VALID_SORT_FIELDS.includes(sortBy)) {
+      throw new ValidationError(
+        `Invalid sortBy value. Must be one of: ${VALID_SORT_FIELDS.join(', ')}`,
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+    if (order && !VALID_ORDERS.includes(order)) {
+      throw new ValidationError(
+        `Invalid order value. Must be one of: ${VALID_ORDERS.join(', ')}`,
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+
+    let start = startDate ? new Date(startDate) : null;
+    let end = endDate ? new Date(endDate) : null;
+
+    if (start && isNaN(start.getTime())) {
+      throw new ValidationError('Invalid startDate', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (end && isNaN(end.getTime())) {
+      throw new ValidationError('Invalid endDate', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (start && end && start > end) {
+      throw new ValidationError('startDate must not be after endDate', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const minAmt = minAmount !== undefined ? parseFloat(minAmount) : null;
+    const maxAmt = maxAmount !== undefined ? parseFloat(maxAmount) : null;
+
+    if (minAmt !== null && isNaN(minAmt)) {
+      throw new ValidationError('Invalid minAmount', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (maxAmt !== null && isNaN(maxAmt)) {
+      throw new ValidationError('Invalid maxAmount', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (minAmt !== null && maxAmt !== null && minAmt > maxAmt) {
+      throw new ValidationError('minAmount must not be greater than maxAmount', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const donorLower = donor ? donor.toLowerCase() : null;
+    const recipientLower = recipient ? recipient.toLowerCase() : null;
+    const memoLower = memo ? memo.toLowerCase() : null;
+
+    let result = transactions.filter(tx => {
+      if (start && new Date(tx.timestamp) < start) return false;
+      if (end && new Date(tx.timestamp) > end) return false;
+      if (minAmt !== null && tx.amount < minAmt) return false;
+      if (maxAmt !== null && tx.amount > maxAmt) return false;
+      if (status && tx.status !== status) return false;
+      if (donorLower && !(tx.donor || '').toLowerCase().includes(donorLower)) return false;
+      if (recipientLower && !(tx.recipient || '').toLowerCase().includes(recipientLower)) return false;
+      if (memoLower && !(tx.memo || '').toLowerCase().includes(memoLower)) return false;
+      return true;
+    });
+
+    result.sort((a, b) => {
+      let aVal = a[sortBy];
+      let bVal = b[sortBy];
+      if (sortBy === 'timestamp') {
+        aVal = new Date(aVal).getTime();
+        bVal = new Date(bVal).getTime();
+      } else if (sortBy === 'amount') {
+        aVal = Number(aVal);
+        bVal = Number(bVal);
+      } else {
+        aVal = String(aVal || '');
+        bVal = String(bVal || '');
+      }
+      if (aVal < bVal) return order === 'asc' ? -1 : 1;
+      if (aVal > bVal) return order === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return result;
+  }
+
+  /**
+   * Get donations using cursor-based pagination with optional filtering.
    * @param {Object} pagination - Pagination options.
    * @param {{ timestamp: string, id: string }|null} pagination.cursor - Decoded cursor.
    * @param {number} pagination.limit - Page size.
    * @param {string} pagination.direction - Pagination direction.
-   * @returns {{ data: Array, totalCount: number, meta: Object }} Paginated donations.
+   * @param {Object} [filters={}] - Filter/search options (see applyFilters).
+   * @returns {{ data: Array, totalCount: number, meta: Object, appliedFilters: Object }} Paginated donations.
    */
   getPaginatedDonations(pagination, filters = {}) {
     let transactions = Transaction.getAll();
@@ -600,7 +752,28 @@ class DonationService {
       ...pagination,
       timestampField: 'timestamp',
       idField: 'id',
+      // If custom sort was applied, disable paginateCollection's re-sort
+      // by passing a pre-sorted flag via a stable secondary sort on id only.
+      ...(useCustomSort && { _presorted: true }),
     });
+
+    // paginateCollection always re-sorts by timestamp; re-apply custom sort to the page
+    if (useCustomSort) {
+      result.data = this.applyFilters(result.data, { sortBy, order: order || 'desc' });
+    }
+
+    const appliedFilters = {};
+    for (const [key, val] of Object.entries(filters)) {
+      if (val !== undefined && val !== null && val !== '') {
+        appliedFilters[key] = val;
+      }
+    }
+
+    return {
+      ...result,
+      appliedFilters,
+      resultCount: result.totalCount,
+    };
   }
 
   _validateTags(tags, apiKeyRole) {

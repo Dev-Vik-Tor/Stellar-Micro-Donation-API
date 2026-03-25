@@ -64,6 +64,7 @@ const sendDonationSchema = validateSchema({
       receiverId: { type: 'integer', required: true, min: 1 },
       amount: { type: 'number', required: true, min: 0.0000001 },
       memo: { type: 'string', required: false, maxLength: 255, nullable: true },
+      campaign_id: { type: 'integer', required: false, min: 1, nullable: true },
     },
   },
 });
@@ -221,9 +222,9 @@ router.post('/verify', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), verif
  * Requires idempotency key to prevent duplicate transactions
  * Rate limited: 10 requests per minute per IP
  */
-router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, sendDonationSchema, async (req, res) => {
+router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireIdempotency, sendDonationSchema, async (req, res, next) => {
   try {
-    const { senderId, receiverId, amount, memo } = req.body;
+    const { senderId, receiverId, amount, memo, campaign_id } = req.body;
 
     log.debug('DONATION_ROUTE', 'Processing donation request', {
       requestId: req.id,
@@ -267,6 +268,7 @@ router.post('/send', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donatio
       receiverId,
       amount: amountValidation.value,
       memo,
+      campaign_id,
       idempotencyKey: req.idempotency.key,
       requestId: req.id,
       apiKeyId: req.apiKey ? req.apiKey.id : null,
@@ -501,11 +503,42 @@ router.get('/fee-estimate', checkPermission(PERMISSIONS.DONATIONS_READ), async (
   }
 });
 
+const listDonationsQuerySchema = validateSchema({
+  query: {
+    allowUnknown: true,
+    fields: {
+      startDate:  { type: 'string',  required: false, nullable: true },
+      endDate:    { type: 'string',  required: false, nullable: true },
+      minAmount:  { type: 'string',  required: false, nullable: true },
+      maxAmount:  { type: 'string',  required: false, nullable: true },
+      status:     { type: 'string',  required: false, nullable: true, enum: ['pending', 'submitted', 'confirmed', 'failed'] },
+      donor:      { type: 'string',  required: false, nullable: true, maxLength: 255 },
+      recipient:  { type: 'string',  required: false, nullable: true, maxLength: 255 },
+      memo:       { type: 'string',  required: false, nullable: true, maxLength: 255 },
+      sortBy:     { type: 'string',  required: false, nullable: true, enum: ['timestamp', 'amount', 'status'] },
+      order:      { type: 'string',  required: false, nullable: true, enum: ['asc', 'desc'] },
+    },
+  },
+});
+
 /**
  * GET /donations
- * Get all donations
+ * Get all donations with optional filtering and search.
+ *
+ * Query parameters:
+ *   - startDate {string}  ISO date; include donations on or after this date
+ *   - endDate   {string}  ISO date; include donations on or before this date
+ *   - minAmount {number}  Minimum donation amount (inclusive)
+ *   - maxAmount {number}  Maximum donation amount (inclusive)
+ *   - status    {string}  Exact status: pending | submitted | confirmed | failed
+ *   - donor     {string}  Case-insensitive substring match on donor
+ *   - recipient {string}  Case-insensitive substring match on recipient
+ *   - memo      {string}  Case-insensitive full-text search on memo
+ *   - sortBy    {string}  Sort field: timestamp (default) | amount | status
+ *   - order     {string}  Sort order: desc (default) | asc
+ *   - cursor, limit, direction  Cursor pagination (see pagination docs)
  */
-router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), listDonationsQuerySchema, (req, res, next) => {
   try {
     const { tag } = req.query;
     const pagination = parseCursorPaginationQuery(req.query);
