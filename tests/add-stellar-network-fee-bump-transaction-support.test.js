@@ -61,3 +61,48 @@ describe('Transaction Model Fee Bump Fields', () => {
     expect(updated.stellarTxId).toBe('new_hash_123');
   });
 });
+
+describe('StellarService.buildAndSubmitFeeBumpTransaction()', () => {
+  test('method exists and is not the base interface stub', () => {
+    const StellarService = require('../src/services/StellarService');
+    const StellarServiceInterface = require('../src/services/interfaces/StellarServiceInterface');
+    const service = new StellarService({ network: 'testnet' });
+    const baseInterface = new StellarServiceInterface();
+
+    expect(typeof service.buildAndSubmitFeeBumpTransaction).toBe('function');
+    expect(service.buildAndSubmitFeeBumpTransaction).not.toBe(
+      baseInterface.buildAndSubmitFeeBumpTransaction
+    );
+  });
+});
+
+describe('MockStellarService.buildAndSubmitFeeBumpTransaction()', () => {
+  const MockStellarService = require('../src/services/MockStellarService');
+  let mockService;
+
+  beforeEach(() => {
+    mockService = new MockStellarService({ network: 'testnet' });
+  });
+
+  test('returns hash, ledger, fee, and envelopeXdr on success', async () => {
+    const result = await mockService.buildAndSubmitFeeBumpTransaction(
+      'mock_envelope_xdr_base64',
+      200,
+      'SCZANGBA5YHTNYVVV3C7CAZMCLXPILHSE6PGYAY7URFI5NUFQMK3Q7OV'
+    );
+
+    expect(result).toHaveProperty('hash');
+    expect(result).toHaveProperty('ledger');
+    expect(result.fee).toBe(200);
+    expect(result).toHaveProperty('envelopeXdr');
+    expect(result.hash).toMatch(/^mock_/);
+  });
+
+  test('simulates fee_bump_failure when enabled', async () => {
+    mockService.enableFailureSimulation('fee_bump_failure', 1.0);
+
+    await expect(
+      mockService.buildAndSubmitFeeBumpTransaction('xdr', 200, 'SCZANGBA5YHTNYVVV3C7CAZMCLXPILHSE6PGYAY7URFI5NUFQMK3Q7OV')
+    ).rejects.toThrow(/fee bump/i);
+  });
+});

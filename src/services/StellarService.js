@@ -352,6 +352,41 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Build and submit a fee bump transaction wrapping an existing transaction.
+   * @param {string} envelopeXdr - Base64-encoded XDR of the original transaction envelope
+   * @param {number} newFeeStroops - New fee in stroops for the fee bump transaction
+   * @param {string} feeSourceSecret - Secret key of the account paying the new fee
+   * @returns {Promise<{hash: string, ledger: number, fee: number, envelopeXdr: string}>}
+   */
+  async buildAndSubmitFeeBumpTransaction(envelopeXdr, newFeeStroops, feeSourceSecret) {
+    return StellarErrorHandler.wrap(async () => {
+      const feeSourceKeypair = StellarSdk.Keypair.fromSecret(feeSourceSecret);
+
+      const innerTransaction = StellarSdk.TransactionBuilder.fromXDR(
+        envelopeXdr,
+        this.networkPassphrase
+      );
+
+      const feeBumpTx = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
+        feeSourceKeypair,
+        String(newFeeStroops),
+        innerTransaction,
+        this.networkPassphrase
+      );
+
+      feeBumpTx.sign(feeSourceKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(feeBumpTx);
+      return {
+        hash: result.hash,
+        ledger: result.ledger,
+        fee: newFeeStroops,
+        envelopeXdr: feeBumpTx.toEnvelope().toXDR('base64'),
+      };
+    }, 'buildAndSubmitFeeBumpTransaction');
+  }
+
+  /**
    * Send a donation transaction
    * @param {Object} params
    * @param {string} params.sourceSecret - Source account secret key
@@ -398,10 +433,13 @@ class StellarService extends StellarServiceInterface {
       const builtTx = transaction.build();
       builtTx.sign(sourceKeypair);
 
+      const envelopeXdr = builtTx.toEnvelope().toXDR('base64');
       const result = await this._submitTransactionWithNetworkSafety(builtTx);
       return {
         transactionId: result.hash,
         ledger: result.ledger,
+        envelopeXdr,
+        fee: parseInt(this.baseFee),
       };
     }, 'sendDonation');
   }
@@ -436,8 +474,14 @@ class StellarService extends StellarServiceInterface {
       const builtTx = builder.build();
       builtTx.sign(sourceKeypair);
 
+      const envelopeXdr = builtTx.toEnvelope().toXDR('base64');
       const result = await this._submitTransactionWithNetworkSafety(builtTx);
-      return { transactionId: result.hash, ledger: result.ledger };
+      return {
+        transactionId: result.hash,
+        ledger: result.ledger,
+        envelopeXdr,
+        fee: parseInt(StellarSdk.BASE_FEE),
+      };
     }, 'sendBatchDonations');
   }
 
