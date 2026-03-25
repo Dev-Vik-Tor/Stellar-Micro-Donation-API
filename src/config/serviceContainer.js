@@ -71,7 +71,8 @@ function getInstance() {
       useMockStellar: process.env.USE_MOCK_STELLAR === 'true' || process.env.MOCK_STELLAR === 'true',
       stellar: {
         network: process.env.STELLAR_NETWORK || 'testnet',
-        horizonUrl: process.env.HORIZON_URL
+        horizonUrl: process.env.HORIZON_URL,
+        serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
       }
     });
   }

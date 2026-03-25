@@ -22,6 +22,7 @@ const { validateRequiredFields, validateFloat, validateInteger } = require('../u
 const { validateSchema } = require('../middleware/schemaValidation');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
+const { parseAssetInput } = require('../utils/stellarAsset');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
@@ -74,6 +75,52 @@ const createDonationSchema = validateSchema({
         maxLength: 255,
         nullable: true,
       },
+      sourceAsset: {
+        types: ['string', 'object'],
+        required: false,
+        nullable: true,
+      },
+      sourceAmount: {
+        type: 'numberString',
+        required: false,
+      },
+    },
+    validate: (body) => {
+      if ((body.sourceAsset && !body.sourceAmount) || (!body.sourceAsset && body.sourceAmount)) {
+        return 'sourceAsset and sourceAmount must be provided together';
+      }
+
+      return null;
+    },
+  },
+});
+
+const pathEstimateSchema = validateSchema({
+  query: {
+    fields: {
+      sourceAsset: {
+        type: 'string',
+        required: true,
+      },
+      sourceAmount: {
+        type: 'numberString',
+        required: false,
+      },
+      destAsset: {
+        type: 'string',
+        required: false,
+      },
+      destAmount: {
+        type: 'numberString',
+        required: false,
+      },
+    },
+    validate: (query) => {
+      if (!query.sourceAmount && !query.destAmount) {
+        return 'Either sourceAmount or destAmount is required';
+      }
+
+      return null;
     },
   },
 });
@@ -278,7 +325,7 @@ router.post('/send', donationRateLimiter, requireIdempotency, sendDonationSchema
  */
 router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-    const { amount, donor, recipient, memo } = req.body;
+    const { amount, donor, recipient, memo, sourceAsset, sourceAmount } = req.body;
 
     // Basic validation
     if (!amount || !recipient) {
@@ -298,12 +345,26 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
       });
     }
 
+    let sourceAmountValidation = null;
+    let normalizedSourceAsset = null;
+    if (sourceAsset || sourceAmount) {
+      normalizedSourceAsset = parseAssetInput(sourceAsset, 'sourceAsset');
+      sourceAmountValidation = validateFloat(sourceAmount);
+      if (!sourceAmountValidation.valid) {
+        return res.status(400).json({
+          error: `Invalid sourceAmount: ${sourceAmountValidation.error}`
+        });
+      }
+    }
+
     // Delegate to service
     const transaction = await donationService.createDonationRecord({
       amount: amountValidation.value,
       donor,
       recipient,
       memo,
+      sourceAsset: normalizedSourceAsset,
+      sourceAmount: sourceAmountValidation ? sourceAmountValidation.value : undefined,
       idempotencyKey: req.idempotency.key
     });
 
@@ -348,6 +409,45 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) =>
       data: result.data,
       count: result.data.length,
       meta: result.meta
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /donations/path-estimate
+ * Estimate the best Stellar path payment route for a donation.
+ */
+router.get('/path-estimate', requireApiKey, pathEstimateSchema, async (req, res, next) => {
+  try {
+    const sourceAmount = req.query.sourceAmount ? validateFloat(req.query.sourceAmount) : null;
+    const destAmount = req.query.destAmount ? validateFloat(req.query.destAmount) : null;
+
+    if (sourceAmount && !sourceAmount.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid sourceAmount: ${sourceAmount.error}`
+      });
+    }
+
+    if (destAmount && !destAmount.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid destAmount: ${destAmount.error}`
+      });
+    }
+
+    const estimate = await donationService.estimateDonationPath({
+      sourceAsset: req.query.sourceAsset,
+      sourceAmount: sourceAmount ? sourceAmount.value : undefined,
+      destAsset: req.query.destAsset,
+      destAmount: destAmount ? destAmount.value : undefined,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: estimate,
     });
   } catch (error) {
     next(error);

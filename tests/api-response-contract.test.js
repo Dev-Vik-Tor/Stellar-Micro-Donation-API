@@ -6,6 +6,7 @@ const mockDonationService = {
   createDonationRecord: jest.fn(),
   verifyTransaction: jest.fn(),
   getAllDonations: jest.fn(),
+  getPaginatedDonations: jest.fn(),
   getDonationLimits: jest.fn(),
   getRecentDonations: jest.fn(),
   getDonationById: jest.fn(),
@@ -82,7 +83,7 @@ const RESPONSE_CONTRACTS = {
     errorRequired: ['code', 'message', 'requestId', 'timestamp'],
   },
   listDonationsSuccess: {
-    topLevel: ['success', 'data', 'count'],
+    topLevel: ['success', 'data', 'count', 'meta'],
   },
   verifyDonationError: {
     topLevel: ['success', 'error'],
@@ -122,15 +123,24 @@ describe('API Response Contract Tests', () => {
       transactionHash: 'tx_001',
       verified: true,
     });
-    mockDonationService.getAllDonations.mockReturnValue([
-      {
-        id: 'don_001',
-        donor: 'GDONOR',
-        recipient: 'GRECIPIENT',
-        amount: 10,
-        timestamp: '2026-01-01T00:00:00.000Z',
+    mockDonationService.getPaginatedDonations.mockReturnValue({
+      data: [
+        {
+          id: 'don_001',
+          donor: 'GDONOR',
+          recipient: 'GRECIPIENT',
+          amount: 10,
+          timestamp: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      totalCount: 1,
+      meta: {
+        hasNextPage: false,
+        hasPreviousPage: false,
+        nextCursor: null,
+        previousCursor: null,
       },
-    ]);
+    });
 
     app = express();
     app.use(express.json());

@@ -31,6 +31,20 @@ class StellarServiceInterface {
     throw new Error('getTransaction() must be implemented');
   }
 
+  async discoverBestPath(params) {
+    throw new Error('discoverBestPath() must be implemented');
+  }
+
+  async pathPayment(sourceAsset, sourceAmount, destAsset, destAmount, path, options = {}) {
+    void sourceAsset;
+    void sourceAmount;
+    void destAsset;
+    void destAmount;
+    void path;
+    void options;
+    throw new Error('pathPayment() must be implemented');
+  }
+
   isValidAddress(address) {
     throw new Error('isValidAddress() must be implemented');
   }

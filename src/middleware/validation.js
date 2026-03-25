@@ -24,7 +24,7 @@ function validateDateRange(req, res, next) {
 const ROUTE_ALLOWED_FIELDS = [
   { methods: ['POST'], pattern: /^\/donations\/send$/, fields: ['senderId', 'receiverId', 'amount', 'memo', 'idempotencyKey'] },
   { methods: ['POST'], pattern: /^\/donations\/verify$/, fields: ['transactionHash', 'stellarTxId'] },
-  { methods: ['POST'], pattern: /^\/donations$/, fields: ['donor', 'recipient', 'amount', 'memo', 'idempotencyKey'] },
+  { methods: ['POST'], pattern: /^\/donations$/, fields: ['donor', 'recipient', 'amount', 'memo', 'sourceAsset', 'sourceAmount', 'idempotencyKey'] },
   { methods: ['PATCH'], pattern: /^\/donations\/[^/]+\/status$/, fields: ['status', 'stellarTxId', 'ledger'] },
   { methods: ['POST'], pattern: /^\/wallets$/, fields: ['address', 'label', 'ownerName'] },
   { methods: ['PATCH'], pattern: /^\/wallets\/[^/]+$/, fields: ['label', 'ownerName'] },
