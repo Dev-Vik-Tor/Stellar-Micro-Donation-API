@@ -27,22 +27,55 @@ app.get('/health', (req, res) => {
   });
 });
 
-// 404 handler
+// 404 handler — must come after all routes
 app.use((req, res) => {
   res.status(404).json({
+    success: false,
     error: 'Endpoint not found',
     path: req.path,
     method: req.method
   });
 });
 
-// Error handler
-app.use((err, req, res, next) => {
+/**
+ * Hardened catch-all error handler.
+ * Always returns JSON regardless of error type.
+ * Sets Content-Type: application/json before writing the response so that
+ * even if res.json() itself throws, the fallback write still carries the
+ * correct header.
+ *
+ * @param {Error} err - The error object passed via next(err)
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} _next - Required 4-arg signature for Express error middleware
+ */
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
   console.error('Error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: err.message
-  });
+
+  const status = (typeof err.status === 'number' && err.status >= 100 && err.status < 600)
+    ? err.status
+    : (typeof err.statusCode === 'number' && err.statusCode >= 100 && err.statusCode < 600)
+      ? err.statusCode
+      : 500;
+
+  const body = {
+    success: false,
+    error: err.message || 'Internal server error',
+    status,
+  };
+
+  // Set header first so it is present even if res.json() throws
+  res.setHeader('Content-Type', 'application/json');
+
+  try {
+    res.status(status).json(body);
+  } catch (_jsonErr) {
+    // Last-resort fallback: res.json() itself failed — write raw JSON string
+    if (!res.headersSent) {
+      res.status(status).end(JSON.stringify(body));
+    }
+  }
 });
 
 const PORT = config.port;
