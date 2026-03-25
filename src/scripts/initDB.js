@@ -60,6 +60,8 @@ function createTransactionsTable(db) {
         receiverId INTEGER NOT NULL,
         amount REAL NOT NULL,
         memo TEXT,
+        notes TEXT,
+        tags TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         idempotencyKey TEXT UNIQUE,
         stellar_tx_id TEXT UNIQUE,

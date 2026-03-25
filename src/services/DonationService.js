@@ -18,6 +18,12 @@ const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const { sanitizeIdentifier, sanitizeMemo } = require('../utils/sanitizer');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { PREDEFINED_TAGS } = require('../constants/tags');
+const { paginateCollection } = require('../utils/pagination');
+const { checkConfirmations } = require('../utils/confirmationChecker');
+const { CONFIRMATION_LEDGER_THRESHOLD } = require('../config/confirmationThreshold');
+
+const MAX_MEMO_LENGTH = 28;
 const LimitService = require('./LimitService');
 const log = require('../utils/log');
 const priceOracle = require('./PriceOracleService');
@@ -86,13 +92,15 @@ class DonationService {
    * @param {string} params.requestId - Request ID for logging
    * @returns {Promise<Object>} Donation result with transaction details
    */
-  async sendCustodialDonation({ senderId, receiverId, amount, memo, idempotencyKey, requestId, campaign_id }) {
+  async sendCustodialDonation({ senderId, receiverId, amount, memo, notes, tags, apiKeyId, apiKeyRole = 'user', idempotencyKey, requestId }) {
     log.debug('DONATION_SERVICE', 'Processing custodial donation', {
       requestId,
       senderId,
       receiverId,
       amount,
-      hasMemo: !!memo
+      hasMemo: !!memo,
+      hasNotes: !!notes,
+      tagsCount: tags ? tags.length : 0
     });
 
     // Get sender and receiver
@@ -137,8 +145,8 @@ class DonationService {
 
     // Record in database with sanitized memo
     const dbResult = await Database.run(
-      'INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp, idempotencyKey, stellar_tx_id, campaign_id) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)',
-      [senderId, receiverId, amount, sanitizedMemo, idempotencyKey, stellarResult.transactionId, campaign_id || null]
+      'INSERT INTO transactions (senderId, receiverId, amount, memo, notes, tags, timestamp, idempotencyKey, stellar_tx_id) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)',
+      [senderId, receiverId, amount, sanitizedMemo, notes || null, JSON.stringify(tags || []), idempotencyKey, stellarResult.transactionId]
     );
 
     if (campaign_id) {
@@ -153,7 +161,10 @@ class DonationService {
       amount: parseFloat(amount),
       donor: sender.publicKey,
       recipient: receiver.publicKey,
-      status: TRANSACTION_STATES.PENDING
+      status: TRANSACTION_STATES.PENDING,
+      notes: notes || null,
+      tags: tags || [],
+      apiKeyId: apiKeyId || null
     });
 
     Transaction.updateStatus(transaction.id, TRANSACTION_STATES.SUBMITTED, {
@@ -368,8 +379,7 @@ class DonationService {
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
-  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, idempotencyKey, receivedAmount, sessionId, campaign_id }) {
-  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, memoType = 'text', idempotencyKey, receivedAmount, sessionId }) {
+  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, notes, tags, memoType = 'text', apiKeyId, apiKeyRole = 'user', idempotencyKey, receivedAmount, sessionId }) {
     // Sanitize identifiers
     const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
     const sanitizedRecipient = sanitizeIdentifier(recipient);
@@ -378,6 +388,22 @@ class DonationService {
     if (sanitizedDonor && sanitizedRecipient && sanitizedDonor === sanitizedRecipient) {
       throw new ValidationError('Sender and recipient wallets must be different');
     }
+
+    // Validate memo with type-aware validation
+    const memoResult = memoType && memoType !== 'text'
+      ? memoValidator.validateWithType(memo, memoType)
+      : this.validateAndSanitizeMemo(memo);
+
+    if (!memoResult.valid) {
+      throw new ValidationError(memoResult.error, null, memoResult.code);
+    }
+
+    if (amount <= 0) {
+      throw new ValidationError('Amount must be positive');
+    }
+
+    // Validate tags against taxonomy
+    this._validateTags(tags, apiKeyRole);
 
     // Currency conversion
     const normalizedCurrency = currency.toUpperCase();
@@ -397,15 +423,6 @@ class DonationService {
 
     // Validate XLM amount and limits
     this.validateDonationAmount(xlmAmount, sanitizedDonor);
-
-    // Validate memo with type-aware validation
-    const memoResult = memoType && memoType !== 'text'
-      ? memoValidator.validateWithType(memo, memoType)
-      : this.validateAndSanitizeMemo(memo);
-
-    if (!memoResult.valid) {
-      throw new ValidationError(memoResult.error, null, memoResult.code);
-    }
 
     // Calculate analytics fee
     const feeCalculation = calculateAnalyticsFee(xlmAmount);
@@ -439,6 +456,9 @@ class DonationService {
       recipient: sanitizedRecipient,
       memo: memoResult.sanitized,
       memoType: memoType || 'text',
+      notes: notes || null,
+      tags: tags || [],
+      apiKeyId: apiKeyId || null,
       idempotencyKey: idempotencyKey,
       analyticsFee: feeCalculation.fee,
       analyticsFeePercentage: feeCalculation.feePercentage,
@@ -724,18 +744,11 @@ class DonationService {
    * @returns {{ data: Array, totalCount: number, meta: Object, appliedFilters: Object }} Paginated donations.
    */
   getPaginatedDonations(pagination, filters = {}) {
-    const { sortBy, order, ...filterParams } = filters;
-    const hasFilters = Object.values(filters).some(v => v !== undefined && v !== null && v !== '');
-
-    const allTransactions = Transaction.getAll();
-    const filtered = hasFilters
-      ? this.applyFilters(allTransactions, filters)
-      : allTransactions;
-
-    // When a custom sort is applied, preserve that order through pagination
-    // by using the first item's sort field as the pagination timestamp field.
-    const useCustomSort = sortBy && sortBy !== 'timestamp';
-    const result = paginateCollection(filtered, {
+    let transactions = Transaction.getAll();
+    if (filters.tag) {
+      transactions = transactions.filter(tx => tx.tags && tx.tags.includes(filters.tag));
+    }
+    return paginateCollection(transactions, {
       ...pagination,
       timestampField: 'timestamp',
       idField: 'id',
@@ -761,6 +774,17 @@ class DonationService {
       appliedFilters,
       resultCount: result.totalCount,
     };
+  }
+
+  _validateTags(tags, apiKeyRole) {
+    if (!tags || !Array.isArray(tags)) return;
+    for (const tag of tags) {
+      if (!PREDEFINED_TAGS.includes(tag)) {
+        if (apiKeyRole !== 'premium' && apiKeyRole !== 'admin') {
+          throw new ValidationError(`Custom tags are only allowed for premium or admin accounts. Invalid tag: ${tag}`);
+        }
+      }
+    }
   }
 
   /**
