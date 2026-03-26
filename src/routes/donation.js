@@ -469,6 +469,20 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
     const { amount, currency, donor, recipient, memo, memoType, notes, tags, encryptMemo, validAfter, validBefore } = req.body;
     const { amount, currency, donor, recipient, memo, memoType, notes, tags, anonymous, validAfter, validBefore } = req.body;
     const { amount, currency, donor, recipient, memo, memoType, notes, tags, sourceAsset, sourceAmount, validAfter, validBefore } = req.body;
+    const {
+      amount,
+      currency,
+      donor,
+      recipient,
+      memo,
+      memoType,
+      notes,
+      tags,
+      encryptMemo,
+      anonymous,
+      sourceAsset,
+      sourceAmount
+    } = req.body;
 
     // Basic validation
     if (!amount || !recipient) {
