@@ -135,6 +135,9 @@ app.use(helmet({
 // CORS (must be before body parsers and route handlers)
 app.use(createCorsMiddleware());
 
+// Geographic IP blocking (must be before body parsers)
+app.use(require('../middleware/geoBlock'));
+
 // Payload size limit (must be before body parsers)
 app.use(payloadSizeLimiter);
 
@@ -186,6 +189,7 @@ app.use('/admin/feature-flags', featureFlagsAdminRoutes);
 app.use('/admin/db', dbAdminRoutes);
 app.use('/admin/retention', retentionAdminRoutes);
 app.use('/admin/matching-programs', matchingProgramsAdminRoutes);
+app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
 
 // Fee bump admin route — lazy access to serviceContainer
 app.use('/admin/transactions', (req, res, next) => {
