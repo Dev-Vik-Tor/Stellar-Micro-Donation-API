@@ -265,6 +265,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
     res.json({
       success: true,
       data: formattedTransactions,
+      count: formattedTransactions.length,
       count: formattedTransactions.length
     });
   } catch (error) {
