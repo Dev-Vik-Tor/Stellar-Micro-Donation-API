@@ -31,6 +31,9 @@ const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
 const offersRoutes = require('./offers');
 const tagsRoutes = require('./tags');
+const { metricsMiddleware, registry } = require('../utils/metrics');
+const requireApiKey = require('../middleware/apiKey');
+const { requireAdmin } = require('../middleware/rbac');
 const authRoutes = require('./auth');
 const exportsRoutes = require('./exports');
 const channelsRoutes = require('./channels');
@@ -152,6 +155,14 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
 
+// Prometheus request duration instrumentation
+app.use(metricsMiddleware);
+
+// GET /metrics — Prometheus scrape endpoint (admin only)
+app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
+  res.set('Content-Type', registry.contentType);
+  res.end(await registry.metrics());
+});
 // Content-based request deduplication (for requests without idempotency keys)
 app.use(createDeduplicationMiddleware());
 
