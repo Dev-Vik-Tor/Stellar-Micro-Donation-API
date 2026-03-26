@@ -378,6 +378,127 @@ class StellarService extends StellarServiceInterface {
     }, 'mergeAccount');
   }
 
+  /**
+   * Issue a custom Stellar asset to a recipient.
+   *
+   * Flow:
+   *  1. Recipient must have an existing trustline for the asset (changeTrust op).
+   *  2. Issuer sends a payment of the custom asset to the recipient.
+   *
+   * @param {string} issuerSecret   - Secret key of the asset issuer account
+   * @param {string} assetCode      - Asset code (1-12 alphanumeric characters)
+   * @param {string} amount         - Amount to issue (string, 7 decimal places)
+   * @param {string} recipientPublic - Public key of the recipient
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, issuerPublic: string, amount: string}>}
+   * @throws {ValidationError}    If inputs are invalid
+   * @throws {BusinessLogicError} If the Stellar operation fails
+   */
+  async issueAsset(issuerSecret, assetCode, amount, recipientPublic) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      const issuerKeypair = StellarSdk.Keypair.fromSecret(issuerSecret);
+      const issuerPublic = issuerKeypair.publicKey();
+
+      if (issuerPublic === recipientPublic) {
+        throw new ValidationError('Issuer and recipient cannot be the same account');
+      }
+
+      const asset = new StellarSdk.Asset(assetCode, issuerPublic);
+
+      const issuerAccount = await this._executeWithRetry(() =>
+        this.server.loadAccount(issuerPublic)
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(issuerAccount, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase:
+          this.network === 'public'
+            ? StellarSdk.Networks.PUBLIC
+            : StellarSdk.Networks.TESTNET,
+      })
+        .addOperation(StellarSdk.Operation.payment({
+          destination: recipientPublic,
+          asset,
+          amount: amount.toString(),
+        }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(issuerKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Asset issued', {
+        assetCode, issuerPublic, recipientPublic, amount, hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger, assetCode, issuerPublic, amount };
+    }, 'issueAsset');
+  }
+
+  /**
+   * Burn a custom Stellar asset by sending it back to the issuer.
+   *
+   * @param {string} holderSecret   - Secret key of the current asset holder
+   * @param {string} assetCode      - Asset code to burn
+   * @param {string} issuerPublic   - Public key of the asset issuer
+   * @param {string} amount         - Amount to burn
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, amount: string}>}
+   * @throws {ValidationError}    If inputs are invalid
+   * @throws {BusinessLogicError} If the Stellar operation fails
+   */
+  async burnAsset(holderSecret, assetCode, issuerPublic, amount) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+
+      const holderKeypair = StellarSdk.Keypair.fromSecret(holderSecret);
+      const holderPublic = holderKeypair.publicKey();
+
+      if (holderPublic === issuerPublic) {
+        throw new ValidationError('Holder and issuer cannot be the same account');
+      }
+
+      const asset = new StellarSdk.Asset(assetCode, issuerPublic);
+
+      const holderAccount = await this._executeWithRetry(() =>
+        this.server.loadAccount(holderPublic)
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(holderAccount, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase:
+          this.network === 'public'
+            ? StellarSdk.Networks.PUBLIC
+            : StellarSdk.Networks.TESTNET,
+      })
+        .addOperation(StellarSdk.Operation.payment({
+          destination: issuerPublic,
+          asset,
+          amount: amount.toString(),
+        }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(holderKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Asset burned', {
+        assetCode, issuerPublic, holderPublic, amount, hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger, assetCode, amount };
+    }, 'burnAsset');
+  }
+
+
 }
 
 module.exports = StellarService;
