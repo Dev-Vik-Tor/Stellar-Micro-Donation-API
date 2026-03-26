@@ -1126,4 +1126,48 @@ router.post(
   }
 );
 
+/**
+ * GET /donations/:id/impact
+ * Calculate the real-world impact of a specific donation based on its campaign's impact metrics.
+ *
+ * Returns an array of impact breakdowns per metric (e.g. "5 meals delivered").
+ * Returns an empty impact array if the donation has no campaign_id or no metrics are defined.
+ */
+router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, async (req, res, next) => {
+  try {
+    const ImpactMetricService = require('../services/ImpactMetricService');
+    const transaction = donationService.getDonationById(req.params.id);
+
+    if (!transaction.campaign_id) {
+      return res.json({
+        success: true,
+        data: {
+          donation_id: transaction.id,
+          amount: transaction.amount,
+          campaign_id: null,
+          impact: [],
+          message: 'No campaign associated with this donation',
+        },
+      });
+    }
+
+    const impact = await ImpactMetricService.calculateDonationImpact(
+      parseFloat(transaction.amount),
+      transaction.campaign_id
+    );
+
+    res.json({
+      success: true,
+      data: {
+        donation_id: transaction.id,
+        amount: transaction.amount,
+        campaign_id: transaction.campaign_id,
+        impact,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
