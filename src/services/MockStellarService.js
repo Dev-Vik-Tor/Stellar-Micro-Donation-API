@@ -1435,6 +1435,73 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Set or update an account data entry (mock implementation)
+   * @param {string} secret - Secret key of the account
+   * @param {string} key - Data entry key
+   * @param {string} value - Data entry value
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setAccountData(secret, key, value) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    const publicKey = this._secretToPublic(secret);
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      throw new NotFoundError(
+        `Account not found. The account ${publicKey} does not exist on the network.`,
+        ERROR_CODES.WALLET_NOT_FOUND
+      );
+    }
+
+    // Initialize data_attr if it doesn't exist
+    if (!wallet.data_attr) {
+      wallet.data_attr = {};
+    }
+
+    // Store the value (base64-encoded to simulate Stellar's binary storage)
+    wallet.data_attr[key] = Buffer.from(value).toString('base64');
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { hash: txId, ledger };
+  }
+
+  /**
+   * Delete an account data entry by setting its value to null
+   * @param {string} secret - Secret key of the account
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async deleteAccountData(secret, key) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+
+    const publicKey = this._secretToPublic(secret);
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      throw new NotFoundError(
+        `Account not found. The account ${publicKey} does not exist on the network.`,
+        ERROR_CODES.WALLET_NOT_FOUND
+      );
+    }
+
+    // Initialize data_attr if it doesn't exist
+    if (!wallet.data_attr) {
+      wallet.data_attr = {};
+    }
+
+    // Delete the key
+    delete wallet.data_attr[key];
+
+    const txId = crypto.randomBytes(32).toString('hex');
+    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+    return { hash: txId, ledger };
+  }
+
+  /**
    * Derive a mock public key from a secret key (deterministic for test consistency).
    * @private
    */
