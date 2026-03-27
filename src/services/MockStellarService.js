@@ -1853,6 +1853,70 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Mock implementation of clawback.
+   * Reclaims an asset from a holder back to the issuer.
+   *
+   * @param {string} issuerSecret - Secret key of the asset issuer
+   * @param {string} from         - Public key of the holder to clawback from
+   * @param {string} assetCode    - Asset code
+   * @param {string} amount       - Amount to clawback
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, from: string, amount: string}>}
+   */
+  async clawback(issuerSecret, from, assetCode, amount) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validateSecretKey(issuerSecret);
+      this._validatePublicKey(from);
+      this._simulateFailure();
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) {
+        throw new ValidationError('Amount must be a positive number');
+      }
+
+      const issuerWallet = this._findWalletBySecret(issuerSecret);
+      if (!issuerWallet) throw new ValidationError('Invalid issuer secret key');
+
+      if (!this.assetBalances) this.assetBalances = new Map();
+      const assetKey = `${assetCode}:${issuerWallet.publicKey}`;
+      const holders = this.assetBalances.get(assetKey) || new Map();
+      const currentBalance = parseFloat(holders.get(from) || '0');
+
+      if (currentBalance < amountNum) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          `Insufficient asset balance for clawback. Have ${currentBalance.toFixed(7)}, need ${amountNum.toFixed(7)}`
+        );
+      }
+
+      holders.set(from, (currentBalance - amountNum).toFixed(7));
+      this.assetBalances.set(assetKey, holders);
+
+      const hash = 'mock_clawback_' + crypto.randomBytes(16).toString('hex');
+      const ledger = Math.floor(Math.random() * 1000000) + 1000000;
+
+      const tx = {
+        hash, type: 'clawback', assetCode,
+        issuer: issuerWallet.publicKey, from,
+        amount: amountNum.toFixed(7), timestamp: new Date().toISOString(),
+        ledger, status: 'confirmed',
+      };
+      if (!this.transactions.has(issuerWallet.publicKey)) this.transactions.set(issuerWallet.publicKey, []);
+      this.transactions.get(issuerWallet.publicKey).push(tx);
+
+      log.info('MOCK_STELLAR_SERVICE', 'Asset clawback executed', {
+        assetCode, amount: amountNum.toFixed(7), from: `${from.substring(0, 8)}...`,
+      });
+
+      return { hash, ledger, assetCode, from, amount: amountNum.toFixed(7) };
+    });
+  }
+
+  /**
    * Get all holders of a specific asset (mock implementation).
    *
    * @param {string} assetCode    - Asset code
@@ -2002,6 +2066,14 @@ class MockStellarService extends StellarServiceInterface {
     this._simulateFailure();
 
     const publicKey = this._secretToPublic(secret);
+    if (!this.wallets.has(publicKey)) throw new NotFoundError('Account not found');
+    if (!this.wallets.get(publicKey)._data) this.wallets.get(publicKey)._data = {};
+    this.wallets.get(publicKey)._data[key] = value;
+    const hash = `mock_${require('crypto').randomBytes(16).toString('hex')}`;
+    return { hash, ledger: Math.floor(Math.random() * 1000000) + 1 };
+  }
+
+  /**
    * Load a mock account object for the given public key.
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{id: string, sequence: string, balances: Array}>}
@@ -2291,6 +2363,47 @@ class MockStellarService extends StellarServiceInterface {
 
   xlmToStroops(xlm) {
     return Math.floor(parseFloat(xlm) * 10000000).toString();
+  }
+
+  /**
+   * Mock implementation of setOptions.
+   * Tracks account flags and home domain in the wallet record.
+   * Validates that AUTH_IMMUTABLE (flag 8) cannot be cleared.
+   *
+   * @param {string} secret  - Account secret key
+   * @param {object} options - setOptions fields
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setOptions(secret, options = {}) {
+    const AUTH_IMMUTABLE = 8;
+
+    if (options.clearFlags !== undefined) {
+      // eslint-disable-next-line no-bitwise
+      if ((Number(options.clearFlags) & AUTH_IMMUTABLE) !== 0) {
+        throw new ValidationError('AUTH_IMMUTABLE flag cannot be cleared once set');
+      }
+    }
+
+    const wallet = this._findWalletBySecret(secret);
+    if (!wallet) throw new ValidationError('Invalid secret key');
+
+    if (!wallet._flags) wallet._flags = 0;
+
+    if (options.setFlags !== undefined) {
+      // eslint-disable-next-line no-bitwise
+      wallet._flags |= Number(options.setFlags);
+    }
+    if (options.clearFlags !== undefined) {
+      // eslint-disable-next-line no-bitwise
+      wallet._flags &= ~Number(options.clearFlags);
+    }
+    if (options.homeDomain !== undefined) wallet.homeDomain = options.homeDomain;
+    if (options.masterWeight !== undefined) wallet.masterWeight = options.masterWeight;
+    if (options.inflationDest !== undefined) wallet.inflationDestination = options.inflationDest;
+
+    const hash = `mock_${require('crypto').randomBytes(16).toString('hex')}`;
+    const ledger = Math.floor(Math.random() * 1000000) + 1;
+    return { hash, ledger };
   }
 }
 

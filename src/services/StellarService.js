@@ -974,6 +974,56 @@ class StellarService extends StellarServiceInterface {
     }, 'burnAsset');
   }
 
+  /**
+   * Clawback a custom Stellar asset from a holder back to the issuer.
+   *
+   * Requires the asset to have CLAWBACK_ENABLED flag set on the issuer account.
+   * Only the asset issuer can perform clawback operations.
+   *
+   * @param {string} issuerSecret  - Secret key of the asset issuer
+   * @param {string} from          - Public key of the account to clawback from
+   * @param {string} assetCode     - Asset code to clawback
+   * @param {string} amount        - Amount to clawback
+   * @returns {Promise<{hash: string, ledger: number, assetCode: string, from: string, amount: string}>}
+   */
+  async clawback(issuerSecret, from, assetCode, amount) {
+    return StellarErrorHandler.wrap(async () => {
+      const { ValidationError } = require('../utils/errors');
+
+      if (!assetCode || !/^[A-Za-z0-9]{1,12}$/.test(assetCode)) {
+        throw new ValidationError('Asset code must be 1-12 alphanumeric characters');
+      }
+      if (!from) throw new ValidationError('from (holder public key) is required');
+      if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+        throw new ValidationError('amount must be a positive number');
+      }
+
+      const issuerKeypair = StellarSdk.Keypair.fromSecret(issuerSecret);
+      const issuerPublic = issuerKeypair.publicKey();
+      const asset = new StellarSdk.Asset(assetCode, issuerPublic);
+
+      const issuerAccount = await this._executeWithRetry(() =>
+        this.server.loadAccount(issuerPublic)
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(issuerAccount, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.clawback({ asset, from, amount: amount.toString() }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(issuerKeypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+
+      log.info('STELLAR_SERVICE', 'Asset clawback executed', {
+        assetCode, issuerPublic, from, amount, hash: result.hash,
+      });
+
+      return { hash: result.hash, ledger: result.ledger, assetCode, from, amount };
+    }, 'clawback');
+  }
 
   /**
    * Get the inflation destination for a Stellar account.
@@ -1044,6 +1094,7 @@ class StellarService extends StellarServiceInterface {
     }, 'setInflationDestination');
   }
 
+  /**
    * Append events to the internal event store.
    * @private
    * @param {string} contractId
@@ -1089,6 +1140,53 @@ class StellarService extends StellarServiceInterface {
         ledger: result.ledger,
       };
     }, 'setAccountData');
+  }
+
+  /**
+   * Set account options on the Stellar network.
+   *
+   * Supports all Stellar setOptions fields: homeDomain, inflationDest,
+   * masterWeight, lowThreshold, medThreshold, highThreshold, signer, setFlags,
+   * clearFlags.
+   *
+   * AUTH_IMMUTABLE (flag 8) cannot be cleared once set — this is enforced
+   * on-chain by the network; we validate it here for a clear error message.
+   *
+   * @param {string} secret  - Account secret key
+   * @param {object} options - setOptions fields (see Stellar SDK docs)
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setOptions(secret, options = {}) {
+    return StellarErrorHandler.wrap(async () => {
+      const keypair = StellarSdk.Keypair.fromSecret(secret);
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(keypair.publicKey()),
+        'loadAccountForSetOptions'
+      );
+
+      // Validate: AUTH_IMMUTABLE (flag 8) cannot be cleared
+      const AUTH_IMMUTABLE = StellarSdk.AuthImmutableFlag;
+      if (options.clearFlags !== undefined) {
+        const flags = Number(options.clearFlags);
+        // eslint-disable-next-line no-bitwise
+        if ((flags & AUTH_IMMUTABLE) !== 0) {
+          const { ValidationError: VE } = require('../utils/errors');
+          throw new VE('AUTH_IMMUTABLE flag cannot be cleared once set');
+        }
+      }
+
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.setOptions(options))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(keypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+      return { hash: result.hash, ledger: result.ledger };
+    }, 'setOptions');
   }
 
   /**

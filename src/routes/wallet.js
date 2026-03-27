@@ -17,7 +17,6 @@ const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
-const Database = require('../utils/database');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const { validateSchema } = require('../middleware/schemaValidation');
@@ -610,6 +609,8 @@ router.delete('/:id/data/:key',
     }
   }
 );
+
+/**
  * POST /wallets/:id/merge
  * Merge a wallet into a destination account.
  *
@@ -714,6 +715,59 @@ router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (re
         mergedAt: now,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─── Account Set Options ──────────────────────────────────────────────────────
+
+const walletOptionsSchema = validateSchema({
+  params: { fields: { id: { type: 'integerString', required: true } } },
+  body: {
+    fields: {
+      secret:         { type: 'string', required: true },
+      homeDomain:     { type: 'string', required: false, nullable: true, maxLength: 32 },
+      inflationDest:  { type: 'string', required: false, nullable: true },
+      masterWeight:   { type: 'integer', required: false, min: 0, max: 255 },
+      lowThreshold:   { type: 'integer', required: false, min: 0, max: 255 },
+      medThreshold:   { type: 'integer', required: false, min: 0, max: 255 },
+      highThreshold:  { type: 'integer', required: false, min: 0, max: 255 },
+      setFlags:       { type: 'integer', required: false, min: 0 },
+      clearFlags:     { type: 'integer', required: false, min: 0 },
+    },
+  },
+});
+
+/**
+ * PATCH /wallets/:id/options
+ * Set Stellar account options for a custodial wallet.
+ * Validates that AUTH_IMMUTABLE cannot be cleared.
+ * Logs changes to the audit trail.
+ */
+router.patch('/:id/options', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletOptionsSchema, async (req, res, next) => {
+  try {
+    const walletId = parseInt(req.params.id, 10);
+    const { secret, ...options } = req.body;
+
+    const wallet = await Database.get('SELECT * FROM users WHERE id = ?', [walletId]);
+    if (!wallet) throw new NotFoundError(`Wallet ${walletId} not found`);
+
+    const stellar = getStellarService();
+    const result = await stellar.setOptions(secret, options);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'WALLET_OPTIONS_SET',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${walletId}/options`,
+      details: { walletId, options: Object.keys(options), transactionHash: result.hash },
+    });
+
+    return res.json({ success: true, data: { walletId, transactionHash: result.hash, ledger: result.ledger } });
   } catch (error) {
     next(error);
   }

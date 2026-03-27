@@ -106,6 +106,8 @@ class StellarServiceInterface {
   async getInflationDestination(_publicKey) {
     void _publicKey;
     throw new Error('getInflationDestination() must be implemented');
+  }
+
   async setAccountData(_secret, _key, _value) {
     void _secret;
     void _key;
@@ -117,6 +119,32 @@ class StellarServiceInterface {
     void _secret;
     void _key;
     throw new Error('deleteAccountData() must be implemented');
+  }
+
+  /**
+   * Set account options (home domain, thresholds, signers, flags).
+   * @param {string} _secret - Account secret key
+   * @param {object} _options - Stellar setOptions fields
+   */
+  async setOptions(_secret, _options) {
+    void _secret;
+    void _options;
+    throw new Error('setOptions() must be implemented');
+  }
+
+  /**
+   * Clawback a custom asset from a holder.
+   * @param {string} _issuerSecret - Issuer secret key
+   * @param {string} _from         - Holder public key
+   * @param {string} _assetCode    - Asset code
+   * @param {string} _amount       - Amount to clawback
+   */
+  async clawback(_issuerSecret, _from, _assetCode, _amount) {
+    void _issuerSecret;
+    void _from;
+    void _assetCode;
+    void _amount;
+    throw new Error('clawback() must be implemented');
   }
 }
 

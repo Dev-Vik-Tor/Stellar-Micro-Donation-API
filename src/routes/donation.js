@@ -1275,4 +1275,50 @@ router.get('/:id/impact', checkPermission(PERMISSIONS.DONATIONS_READ), donationI
   }
 });
 
+// ─── IPFS Certificate ─────────────────────────────────────────────────────────
+
+const { pinCertificate, GATEWAY_URL } = require('../utils/ipfs');
+const Database = require('../utils/database');
+
+/**
+ * GET /donations/:id/certificate/ipfs
+ * Returns the IPFS gateway URL for a donation's impact certificate.
+ * If no CID is stored yet, pins the certificate on demand.
+ */
+router.get('/:id/certificate/ipfs', checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, async (req, res, next) => {
+  try {
+    const donationId = parseInt(req.params.id, 10);
+    const tx = await Database.get('SELECT * FROM transactions WHERE id = ?', [donationId]);
+    if (!tx) {
+      const { NotFoundError } = require('../utils/errors');
+      throw new NotFoundError(`Donation ${donationId} not found`);
+    }
+
+    let cid = tx.ipfs_cid;
+    let pinned = !!cid;
+
+    if (!cid) {
+      // Pin on demand
+      const result = await pinCertificate({
+        id: tx.id,
+        senderPublicKey: tx.senderPublicKey || String(tx.senderId),
+        receiverPublicKey: tx.receiverPublicKey || String(tx.receiverId),
+        amount: tx.amount,
+        memo: tx.memo,
+        timestamp: tx.timestamp,
+      });
+      cid = result.cid;
+      pinned = result.pinned;
+      await Database.run('UPDATE transactions SET ipfs_cid = ? WHERE id = ?', [cid, donationId]);
+    }
+
+    return res.json({
+      success: true,
+      data: { donationId, cid, gateway: `${GATEWAY_URL}/${cid}`, pinned },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

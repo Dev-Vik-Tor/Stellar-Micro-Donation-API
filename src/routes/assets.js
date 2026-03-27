@@ -18,11 +18,12 @@
 const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');
-const { checkPermission } = require('../middleware/rbac');
+const { checkPermission, requireAdmin } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { getStellarService } = require('../config/stellar');
 const { validateRequiredFields, validateFloat } = require('../utils/validationHelpers');
 const log = require('../utils/log');
+const AuditLogService = require('../services/AuditLogService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -360,6 +361,87 @@ router.put('/:code/metadata', checkPermission(PERMISSIONS.DONATIONS_CREATE), asy
     );
 
     return res.json({ success: true, message: 'Asset metadata saved', data: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /assets/:code/clawback
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @route   POST /assets/:code/clawback
+ * @desc    Clawback a custom Stellar asset from a holder (admin only)
+ * @access  admin
+ *
+ * @body {string} issuerSecret  - Secret key of the asset issuer
+ * @body {string} from          - Public key of the holder to clawback from
+ * @body {string} amount        - Amount to clawback
+ * @body {string} reason        - Required reason for compliance audit trail
+ */
+router.post('/:code/clawback', requireAdmin(), async (req, res, next) => {
+  try {
+    const { code } = req.params;
+    const { issuerSecret, from, amount, reason } = req.body;
+
+    const required = validateRequiredFields(
+      { issuerSecret, from, amount, reason },
+      ['issuerSecret', 'from', 'amount', 'reason']
+    );
+    if (!required.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Missing required fields: ${required.missing.join(', ')}`,
+      });
+    }
+
+    if (!isValidAssetCode(code)) {
+      return res.status(400).json({ success: false, error: 'Invalid asset code.' });
+    }
+
+    const amountResult = validateFloat(amount);
+    if (!amountResult.valid) {
+      return res.status(400).json({ success: false, error: `Invalid amount: ${amountResult.error}` });
+    }
+
+    const stellar = getStellarService();
+    const result = await stellar.clawback(issuerSecret, from, code, amount);
+
+    // Log clawback in audit trail
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
+      action: 'ASSET_CLAWBACK',
+      severity: AuditLogService.SEVERITY.HIGH,
+      result: 'SUCCESS',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/assets/${code}/clawback`,
+      details: {
+        assetCode: code,
+        from,
+        amount: result.amount,
+        reason,
+        transactionHash: result.hash,
+      },
+    });
+
+    log.info('ASSET_ROUTE', 'Asset clawback executed', {
+      assetCode: code, from, amount: result.amount, hash: result.hash,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Clawback of ${result.amount} ${code} from ${from} executed`,
+      data: {
+        assetCode: code,
+        from,
+        amount: result.amount,
+        reason,
+        transactionHash: result.hash,
+        ledger: result.ledger,
+      },
+    });
   } catch (error) {
     next(error);
   }

@@ -579,4 +579,22 @@ router.delete('/:id/totp', requireAdmin(), apiKeyIdParamSchema, async (req, res,
   }
 });
 
+// ─── Anomaly Detection ────────────────────────────────────────────────────────
+
+const anomalyDetectionService = require('../services/AnomalyDetectionService');
+
+/**
+ * GET /api-keys/:id/anomalies
+ * Returns anomaly history for the given API key (admin only).
+ */
+router.get('/:id/anomalies', requireAdmin, apiKeyIdParamSchema, async (req, res, next) => {
+  try {
+    const keyId = String(req.params.id);
+    const anomalies = anomalyDetectionService.getAnomalies(keyId);
+    res.status(200).json({ success: true, data: { keyId, anomalies } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

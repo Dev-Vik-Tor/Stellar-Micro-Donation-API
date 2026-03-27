@@ -71,7 +71,6 @@ async function initializeApiKeysTable() {
   }
 }
 
-async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {}, gracePeriodDays = 30, signingRequired = false, allowedIps = null, monthlyQuota = null }) {
 /**
  * Create a new API key.
  *
@@ -433,6 +432,9 @@ async function resetExpiredQuotas() {
   );
   
   return result.changes;
+}
+
+/**
  * Fetch active keys that expire within the given number of days and have not yet
  * received a notification at this threshold level.
  *

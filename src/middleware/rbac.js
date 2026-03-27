@@ -286,9 +286,13 @@ exports.attachUserRole = () => {
           isLegacy: req.apiKey.isLegacy || false
         };
       }
-      // Priority 2: Standard Header Authentication
-      else if (req.headers && req.headers['x-api-key']) {
-        const apiKey = req.headers['x-api-key'];
+      // Priority 2: Standard Header Authentication (x-api-key or Authorization: Bearer)
+      else if (req.headers && (req.headers['x-api-key'] || req.headers['authorization'])) {
+        let apiKey = req.headers['x-api-key'];
+        if (!apiKey && req.headers['authorization']) {
+          const authHeader = req.headers['authorization'];
+          if (authHeader.startsWith('Bearer ')) apiKey = authHeader.slice(7);
+        }
         const keyInfo = await validateApiKey(apiKey);
 
         if (keyInfo) {
