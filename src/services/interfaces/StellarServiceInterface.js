@@ -119,6 +119,14 @@ class StellarServiceInterface {
     throw new Error('deleteAccountData() must be implemented');
   }
 
+  async mintCertificateNFT(_params) {
+    void _params;
+    throw new Error('mintCertificateNFT() must be implemented');
+  }
+
+  async getCertificatesForWallet(_publicKey) {
+    void _publicKey;
+    throw new Error('getCertificatesForWallet() must be implemented');
   async simulateTransaction(_xdr) {
     void _xdr;
     throw new Error('simulateTransaction() must be implemented');
