@@ -212,6 +212,18 @@ const donationIdParamSchema = validateSchema({
   },
 });
 
+/**
+ * Schema for POST /donations/simulate
+ * Requires a non-empty, trimmed XDR string.
+ */
+const simulateSchema = validateSchema({
+  body: {
+    fields: {
+      xdr: { type: 'string', required: true, trim: true, minLength: 1 },
+    },
+  },
+});
+
 const recentDonationsQuerySchema = validateSchema({
   query: {
     fields: {
@@ -461,6 +473,46 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), safeBat
     next(error);
   }
 });
+
+/**
+ * POST /donations/simulate
+ * Dry-run simulate a Stellar transaction without submitting it to the network.
+ *
+ * Request body:
+ *   - xdr {string} (required) — Base64-encoded Stellar transaction envelope XDR
+ *
+ * Response schema (Simulation_Result envelope):
+ *   200 { success: true,  data: Simulation_Result }  — simulation succeeded
+ *   422 { success: false, data: Simulation_Result }  — simulation returned success: false
+ *   400 { ... }                                       — missing/empty xdr (schema middleware)
+ *   401 { ... }                                       — unauthenticated (requireApiKey)
+ *   429 { ... }                                       — rate limit exceeded
+ *   500 { success: false, error: 'Internal server error' } — unexpected error (no stack trace)
+ *
+ * Security: This endpoint is strictly read-only. No transaction is ever submitted to
+ * the Stellar network. The underlying simulateTransaction() method only performs local
+ * XDR decoding and a read-only Horizon fee stats query.
+ */
+router.post('/simulate', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation),
+  donationRateLimiter, requireApiKey, simulateSchema, async (req, res) => {
+    try {
+      const { xdr } = req.body;
+      const result = await stellarService.simulateTransaction(xdr);
+
+      if (!result.success) {
+        return res.status(422).json({ success: false, data: result });
+      }
+
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      log.error('DONATION_ROUTE', 'Unexpected error during simulation', {
+        requestId: req.id,
+        error: error.message,
+      });
+      return res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  }
+);
 
 /**
  * POST /donations

@@ -118,6 +118,11 @@ class StellarServiceInterface {
     void _key;
     throw new Error('deleteAccountData() must be implemented');
   }
+
+  async simulateTransaction(_xdr) {
+    void _xdr;
+    throw new Error('simulateTransaction() must be implemented');
+  }
 }
 
 module.exports = StellarServiceInterface;
