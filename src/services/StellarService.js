@@ -2094,6 +2094,179 @@ class StellarService extends StellarServiceInterface {
     };
   }
 
+  /**
+   * Execute a strict-send path payment on the Stellar DEX.
+   * Sends exactly sendAmount of sendAsset; recipient receives at least minDestAmount of destAsset.
+   *
+   * @param {string} sourceSecret - Source account secret key
+   * @param {Object} sendAsset - Asset to send (normalized)
+   * @param {string} sendAmount - Exact amount to send
+   * @param {string} destPublicKey - Destination account public key
+   * @param {Object} destAsset - Asset to receive (normalized)
+   * @param {string} minDestAmount - Minimum acceptable destination amount (slippage floor)
+   * @param {Object} [options={}]
+   * @param {string} [options.memo] - Optional memo text
+   * @returns {Promise<{transactionId: string, ledger: number, sourceAmount: string, destAmount: string}>}
+   */
+  async pathPaymentStrictSend(sourceSecret, sendAsset, sendAmount, destPublicKey, destAsset, minDestAmount, options = {}) {
+    return StellarErrorHandler.wrap(async () => {
+      const route = await this.discoverBestPath({ sourceAsset: sendAsset, sourceAmount: sendAmount, destAsset });
+      if (!route) {
+        throw new Error('No payment path found between the specified assets');
+      }
+
+      if (parseFloat(route.destAmount) < parseFloat(minDestAmount)) {
+        throw new Error(
+          `Slippage tolerance exceeded: expected at least ${minDestAmount} ${destAsset.code}, ` +
+          `but best path yields ${route.destAmount}`
+        );
+      }
+
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForStrictSend'
+      );
+
+      const builder = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      }).addOperation(StellarSdk.Operation.pathPaymentStrictSend({
+        sendAsset: toStellarSdkAsset(sendAsset),
+        sendAmount: sendAmount.toString(),
+        destination: destPublicKey,
+        destAsset: toStellarSdkAsset(destAsset),
+        destMin: minDestAmount.toString(),
+        path: (route.path || []).map(a => toStellarSdkAsset(a)),
+      })).setTimeout(30);
+
+      if (options.memo) builder.addMemo(StellarSdk.Memo.text(options.memo));
+
+      const tx = builder.build();
+      tx.sign(sourceKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      return {
+        transactionId: result.hash,
+        ledger: result.ledger,
+        sourceAmount: sendAmount.toString(),
+        destAmount: route.destAmount,
+      };
+    }, 'pathPaymentStrictSend');
+  }
+
+  /**
+   * Execute a strict-receive path payment on the Stellar DEX.
+   * Recipient receives exactly destAmount of destAsset; sender spends at most maxSendAmount of sendAsset.
+   *
+   * @param {string} sourceSecret - Source account secret key
+   * @param {Object} sendAsset - Asset to send (normalized)
+   * @param {string} maxSendAmount - Maximum acceptable source amount (slippage ceiling)
+   * @param {string} destPublicKey - Destination account public key
+   * @param {Object} destAsset - Asset to receive (normalized)
+   * @param {string} destAmount - Exact amount to deliver
+   * @param {Object} [options={}]
+   * @param {string} [options.memo] - Optional memo text
+   * @returns {Promise<{transactionId: string, ledger: number, sourceAmount: string, destAmount: string}>}
+   */
+  async pathPaymentStrictReceive(sourceSecret, sendAsset, maxSendAmount, destPublicKey, destAsset, destAmount, options = {}) {
+    return StellarErrorHandler.wrap(async () => {
+      const route = await this.discoverBestPath({ sourceAsset: sendAsset, destAsset, destAmount });
+      if (!route) {
+        throw new Error('No payment path found between the specified assets');
+      }
+
+      if (parseFloat(route.sourceAmount) > parseFloat(maxSendAmount)) {
+        throw new Error(
+          `Slippage tolerance exceeded: would require ${route.sourceAmount} ${sendAsset.code}, ` +
+          `but maximum is ${maxSendAmount}`
+        );
+      }
+
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForStrictReceive'
+      );
+
+      const builder = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      }).addOperation(StellarSdk.Operation.pathPaymentStrictReceive({
+        sendAsset: toStellarSdkAsset(sendAsset),
+        sendMax: maxSendAmount.toString(),
+        destination: destPublicKey,
+        destAsset: toStellarSdkAsset(destAsset),
+        destAmount: destAmount.toString(),
+        path: (route.path || []).map(a => toStellarSdkAsset(a)),
+      })).setTimeout(30);
+
+      if (options.memo) builder.addMemo(StellarSdk.Memo.text(options.memo));
+
+      const tx = builder.build();
+      tx.sign(sourceKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(tx);
+      return {
+        transactionId: result.hash,
+        ledger: result.ledger,
+        sourceAmount: route.sourceAmount,
+        destAmount: destAmount.toString(),
+      };
+    }, 'pathPaymentStrictReceive');
+  }
+
+  /**
+   * Find available DEX conversion paths between two assets for path preview.
+   *
+   * @param {string} sourcePublicKey - Source account public key (used to filter source assets)
+   * @param {string} destPublicKey - Destination account public key
+   * @param {Object} destAsset - Desired destination asset (normalized)
+   * @param {string} destAmount - Desired destination amount
+   * @returns {Promise<Array<{sourceAsset, sourceAmount, destAsset, destAmount, conversionRate, path}>>}
+   */
+  /**
+   * Get all balances for an account from Horizon.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<Array>} Array of Horizon balance objects
+   */
+  async getAccountBalances(publicKey) {
+    return StellarErrorHandler.wrap(async () => {
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(publicKey),
+        'loadAccountForBalances'
+      );
+      return account.balances;
+    }, 'getAccountBalances');
+  }
+
+  /**
+   * Find available DEX conversion paths between two assets for path preview.
+   *
+   * @param {string} sourcePublicKey - Source account public key (used to filter source assets)
+   * @param {string} destPublicKey - Destination account public key
+   * @param {Object} destAsset - Desired destination asset (normalized)
+   * @param {string} destAmount - Desired destination amount
+   * @returns {Promise<Array<{sourceAsset, sourceAmount, destAsset, destAmount, conversionRate, path}>>}
+   */
+  async findPaymentPaths(sourcePublicKey, destPublicKey, destAsset, destAmount) {
+    return StellarErrorHandler.wrap(async () => {
+      void destPublicKey;
+      const balances = await this.getAccountBalances(sourcePublicKey);
+      const paths = [];
+
+      for (const balance of balances) {
+        const sourceAsset = normalizeHorizonAsset(balance);
+        if (isSameAsset(sourceAsset, destAsset)) continue;
+
+        const route = await this.discoverBestPath({ sourceAsset, destAsset, destAmount });
+        if (route) paths.push(route);
+      }
+
+      return paths;
+    }, 'findPaymentPaths');
+  }
+
 }
 
 module.exports = StellarService;

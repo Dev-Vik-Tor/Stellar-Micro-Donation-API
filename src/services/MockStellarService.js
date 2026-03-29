@@ -2463,24 +2463,12 @@ class MockStellarService extends StellarServiceInterface {
       );
     }
 
-    // Initialize data_attr if it doesn't exist
-    if (!wallet.data_attr) {
-      wallet.data_attr = {};
-    }
-
-    // Delete the key
-    delete wallet.data_attr[key];
-
-    const txId = crypto.randomBytes(32).toString('hex');
-    const ledger = Math.floor(Math.random() * 1000000) + 1000000;
-    return { hash: txId, ledger };
-    const balances = [{ asset_type: 'native', asset_code: 'XLM', balance: wallet.balance }];
-    if (wallet.assetBalances) {
-      for (const [key, balance] of Object.entries(wallet.assetBalances)) {
-        if (key !== 'native') {
-          balances.push({ asset_type: 'credit_alphanum4', asset_code: key, balance });
-        }
-      }
+    this._ensureAssetBalances(wallet);
+    const balances = [{ asset_type: 'native', asset_code: 'XLM', balance: wallet.assetBalances.native }];
+    for (const [key, balance] of Object.entries(wallet.assetBalances)) {
+      if (key === 'native') continue;
+      const [code, issuer] = key.split(':');
+      balances.push({ asset_type: 'credit_alphanum4', asset_code: code, asset_issuer: issuer, balance });
     }
     return balances;
   }
@@ -2959,6 +2947,137 @@ class MockStellarService extends StellarServiceInterface {
       }));
 
       return trustlines;
+    });
+  }
+
+  /**
+   * Execute a strict-send path payment (mock).
+   * Sends exactly sendAmount of sendAsset; recipient receives at least minDestAmount of destAsset.
+   *
+   * @param {string} sourceSecret - Source account secret key
+   * @param {Object} sendAsset - Asset to send (normalized)
+   * @param {string} sendAmount - Exact amount to send
+   * @param {string} destPublicKey - Destination account public key
+   * @param {Object} destAsset - Asset to receive (normalized)
+   * @param {string} minDestAmount - Minimum acceptable destination amount (slippage floor)
+   * @param {Object} [options={}]
+   * @returns {Promise<{transactionId: string, ledger: number, sourceAmount: string, destAmount: string}>}
+   */
+  async pathPaymentStrictSend(sourceSecret, sendAsset, sendAmount, destPublicKey, destAsset, minDestAmount, options = {}) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._simulateFailure();
+
+      const route = await this.discoverBestPath({ sourceAsset: sendAsset, sourceAmount: sendAmount, destAsset });
+      if (!route) {
+        throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'No payment path found between the specified assets');
+      }
+
+      if (parseFloat(route.destAmount) < parseFloat(minDestAmount)) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          `Slippage tolerance exceeded: expected at least ${minDestAmount} ${destAsset.code}, ` +
+          `but best path yields ${route.destAmount}`
+        );
+      }
+
+      return this.pathPayment(sendAsset, sendAmount, destAsset, minDestAmount, route.path || [], {
+        sourceSecret,
+        destinationPublic: destPublicKey,
+        memo: options.memo,
+      }).then(result => ({
+        ...result,
+        sourceAmount: sendAmount.toString(),
+        destAmount: route.destAmount,
+      }));
+    });
+  }
+
+  /**
+   * Execute a strict-receive path payment (mock).
+   * Recipient receives exactly destAmount of destAsset; sender spends at most maxSendAmount of sendAsset.
+   *
+   * @param {string} sourceSecret - Source account secret key
+   * @param {Object} sendAsset - Asset to send (normalized)
+   * @param {string} maxSendAmount - Maximum acceptable source amount (slippage ceiling)
+   * @param {string} destPublicKey - Destination account public key
+   * @param {Object} destAsset - Asset to receive (normalized)
+   * @param {string} destAmount - Exact amount to deliver
+   * @param {Object} [options={}]
+   * @returns {Promise<{transactionId: string, ledger: number, sourceAmount: string, destAmount: string}>}
+   */
+  async pathPaymentStrictReceive(sourceSecret, sendAsset, maxSendAmount, destPublicKey, destAsset, destAmount, options = {}) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._simulateFailure();
+
+      const route = await this.discoverBestPath({ sourceAsset: sendAsset, destAsset, destAmount });
+      if (!route) {
+        throw new BusinessLogicError(ERROR_CODES.TRANSACTION_FAILED, 'No payment path found between the specified assets');
+      }
+
+      if (parseFloat(route.sourceAmount) > parseFloat(maxSendAmount)) {
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          `Slippage tolerance exceeded: would require ${route.sourceAmount} ${sendAsset.code}, ` +
+          `but maximum is ${maxSendAmount}`
+        );
+      }
+
+      return this.pathPayment(sendAsset, route.sourceAmount, destAsset, destAmount, route.path || [], {
+        sourceSecret,
+        destinationPublic: destPublicKey,
+        memo: options.memo,
+      }).then(result => ({
+        ...result,
+        sourceAmount: route.sourceAmount,
+        destAmount: destAmount.toString(),
+      }));
+    });
+  }
+
+  /**
+   * Find available DEX conversion paths for path preview (mock).
+   *
+   * @param {string} sourcePublicKey - Source account public key
+   * @param {string} destPublicKey - Destination account public key
+   * @param {Object} destAsset - Desired destination asset (normalized)
+   * @param {string} destAmount - Desired destination amount
+   * @returns {Promise<Array<Object>>}
+   */
+  async findPaymentPaths(sourcePublicKey, destPublicKey, destAsset, destAmount) {
+    return this._executeWithRetry(async () => {
+      await this._simulateNetworkDelay();
+      this._checkRateLimit();
+      this._validatePublicKey(sourcePublicKey);
+      void destPublicKey;
+
+      if (this.failureSimulation.enabled && this.failureSimulation.type === 'no_path') {
+        return [];
+      }
+
+      const wallet = this.wallets.get(sourcePublicKey);
+      if (!wallet) {
+        throw new NotFoundError('Account not found', ERROR_CODES.WALLET_NOT_FOUND);
+      }
+
+      this._ensureAssetBalances(wallet);
+      const paths = [];
+
+      for (const [key] of Object.entries(wallet.assetBalances)) {
+        const sourceAsset = key === 'native'
+          ? { type: 'native', code: 'XLM', issuer: null }
+          : (() => { const [code, issuer] = key.split(':'); return { type: 'credit_alphanum', code, issuer }; })();
+
+        if (isSameAsset(sourceAsset, destAsset)) continue;
+
+        const route = await this.discoverBestPath({ sourceAsset, destAsset, destAmount });
+        if (route) paths.push(route);
+      }
+
+      return paths;
     });
   }
 }
