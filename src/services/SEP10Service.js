@@ -14,13 +14,15 @@ const crypto = require('crypto');
 const StellarSdk = require('stellar-sdk');
 const { issueAccessToken } = require('./JwtService');
 const log = require('../utils/log');
-const { ValidationError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError, ERROR_CODES } = require('../utils/errors');
 
 class SEP10Service {
   constructor(stellarService, config = {}) {
     this.stellarService = stellarService;
+    this.challengeStore = new Map();
+    this.challengePrefix = config.challengePrefix || 'web_auth_';
     this.config = {
-      challengeExpiresIn: config.challengeExpiresIn || 15 * 60 * 1000, // 15 minutes
+      challengeExpiresIn: config.challengeExpiresIn || 15 * 60 * 1000, // default 15 minutes
       serverSigningKey: config.serverSigningKey,
       homeDomain: config.homeDomain || 'localhost',
       ...config
@@ -40,7 +42,6 @@ class SEP10Service {
    */
   async generateChallenge(clientAccount) {
     try {
-      // Validate client account format
       if (!StellarSdk.StrKey.isValidEd25519PublicKey(clientAccount)) {
         throw new ValidationError(
           'Invalid Stellar public key format',
@@ -49,41 +50,40 @@ class SEP10Service {
         );
       }
 
-      // Get server account for challenge
+      this._cleanupExpiredChallenges();
+
       const serverKeypair = StellarSdk.Keypair.fromSecret(this.config.serverSigningKey);
       const serverAccount = await this.stellarService.loadAccount(serverKeypair.publicKey());
 
-      // Generate unique challenge string
-      const challenge = this._generateChallengeString();
+      const challengeId = this._generateChallengeString();
+      const expiresAtMs = Date.now() + this.config.challengeExpiresIn;
+      const expiresAtSeconds = Math.floor(expiresAtMs / 1000);
+      const memo = `${this.config.homeDomain} auth ${challengeId} ${expiresAtSeconds}`;
+      const operationName = `${this.challengePrefix}${challengeId}`;
 
-      // Create time-bound memo (expires in 15 minutes)
-      const expiresAt = Math.floor((Date.now() + this.config.challengeExpiresIn) / 1000);
-      const memo = `${this.config.homeDomain} auth ${challenge} ${expiresAt}`;
-
-      // Build transaction with manageData operation
       const transaction = new StellarSdk.TransactionBuilder(serverAccount, {
         fee: this.stellarService.baseFee,
         networkPassphrase: this.stellarService.networkPassphrase,
       })
         .addOperation(StellarSdk.Operation.manageData({
-          name: `web_auth_${challenge}`,
+          name: operationName,
           value: clientAccount,
         }))
         .addMemo(StellarSdk.Memo.text(memo))
-        .setTimeout(0) // No timeout, rely on memo expiration
+        .setTimeout(0)
         .build();
 
-      // Sign with server key
       transaction.sign(serverKeypair);
+
+      this._registerChallenge(challengeId, clientAccount, expiresAtMs);
 
       log.info('SEP10', 'Challenge transaction generated', {
         clientAccount: this._maskPublicKey(clientAccount),
-        challengeId: challenge,
-        expiresAt: new Date(expiresAt * 1000).toISOString()
+        challengeId,
+        expiresAt: new Date(expiresAtMs).toISOString()
       });
 
       return transaction.toXDR();
-
     } catch (error) {
       log.error('SEP10', 'Failed to generate challenge', { error: error.message });
       throw error;
@@ -98,30 +98,33 @@ class SEP10Service {
    */
   async verifyChallenge(signedTransactionXDR) {
     try {
-      // Parse the signed transaction
       const transaction = StellarSdk.TransactionBuilder.fromXDR(
         signedTransactionXDR,
         this.stellarService.networkPassphrase
       );
 
-      // Verify transaction hasn't expired based on memo
-      this._verifyTransactionMemo(transaction);
+      const memoPayload = this._verifyTransactionMemo(transaction);
+      const { clientAccount, challengeId: operationChallengeId } = this._verifyChallengeStructure(transaction);
 
-      // Verify the transaction structure and determine the client account
-      const clientAccount = this._verifyChallengeStructure(transaction);
+      if (memoPayload.challengeId !== operationChallengeId) {
+        throw new ValidationError(
+          'Challenge transaction metadata mismatch',
+          null,
+          ERROR_CODES.INVALID_REQUEST
+        );
+      }
 
-      // Verify server signature is present
       this._verifyServerSignature(transaction);
-
-      // Verify client signature
       this._verifyTransactionSignatures(transaction, clientAccount);
+
+      this._getChallengeEntry(memoPayload.challengeId, clientAccount);
+      this._markChallengeUsed(memoPayload.challengeId);
 
       log.info('SEP10', 'Challenge verification successful', {
         account: this._maskPublicKey(clientAccount)
       });
 
       return clientAccount;
-
     } catch (error) {
       log.error('SEP10', 'Challenge verification failed', { error: error.message });
       throw error;
@@ -136,11 +139,10 @@ class SEP10Service {
    * @returns {string} JWT access token
    */
   issueAuthToken(stellarAccount, claims = {}) {
-    // Create claims for Stellar-based authentication
     const jwtClaims = {
-      sub: stellarAccount, // Subject is the Stellar account
+      sub: stellarAccount,
       auth_method: 'sep10',
-      role: 'user', // Default role, could be enhanced with account-based roles
+      role: 'user',
       ...claims
     };
 
@@ -157,10 +159,83 @@ class SEP10Service {
   }
 
   /**
+   * Register issued challenge for replay detection and TTL enforcement
+   * @private
+   */
+  _registerChallenge(challengeId, clientAccount, expiresAt) {
+    this.challengeStore.set(challengeId, {
+      account: clientAccount,
+      expiresAt,
+      issuedAt: Date.now(),
+      used: false,
+    });
+  }
+
+  /**
+   * Clean up expired challenges from the in-memory store
+   * @private
+   */
+  _cleanupExpiredChallenges() {
+    const now = Date.now();
+    for (const [key, entry] of this.challengeStore.entries()) {
+      if (entry.expiresAt <= now) {
+        this.challengeStore.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Fetch a challenge entry and assert it is still valid for the given account
+   * @private
+   */
+  _getChallengeEntry(challengeId, clientAccount) {
+    this._cleanupExpiredChallenges();
+
+    const entry = this.challengeStore.get(challengeId);
+    if (!entry) {
+      throw new ValidationError(
+        'Challenge transaction has expired or was not issued by this server',
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+
+    if (entry.used) {
+      throw new ValidationError(
+        'Challenge transaction has already been used',
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+
+    if (entry.account !== clientAccount) {
+      throw new ValidationError(
+        'Challenge transaction account mismatch',
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+
+    return entry;
+  }
+
+  /**
+   * Mark a challenge as consumed to prevent replay
+   * @private
+   */
+  _markChallengeUsed(challengeId) {
+    const entry = this.challengeStore.get(challengeId);
+    if (entry) {
+      entry.used = true;
+      entry.usedAt = Date.now();
+    }
+  }
+
+  /**
    * Verify transaction memo and extract expiration time
    * @private
    * @param {Transaction} transaction
-   * @returns {string} The authenticated account from the memo
+   * @returns {{ challengeId: string, expiresAt: number }}
    */
   _verifyTransactionMemo(transaction) {
     if (!transaction.memo || transaction.memo.type !== StellarSdk.MemoText) {
@@ -182,8 +257,17 @@ class SEP10Service {
       );
     }
 
+    const challengeId = parts[2];
     const expiresAt = parseInt(parts[3], 10);
-    if (isNaN(expiresAt) || Date.now() / 1000 > expiresAt) {
+    if (!challengeId || isNaN(expiresAt)) {
+      throw new ValidationError(
+        'Invalid challenge transaction: malformed memo',
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+
+    if (Date.now() / 1000 > expiresAt) {
       throw new ValidationError(
         'Challenge transaction has expired',
         null,
@@ -191,7 +275,7 @@ class SEP10Service {
       );
     }
 
-    return true;
+    return { challengeId, expiresAt };
   }
 
   /**
@@ -201,11 +285,9 @@ class SEP10Service {
    * @param {string} expectedAccount - Expected signer account
    */
   _verifyTransactionSignatures(transaction, expectedAccount) {
-    // For SEP-0010, the transaction should be signed by the client account
     const clientKeypair = StellarSdk.Keypair.fromPublicKey(expectedAccount);
 
     try {
-      // Check if the transaction has a valid signature from the client
       const validSignatures = transaction.signatures.filter(sig => {
         try {
           return clientKeypair.verify(transaction.hash(), sig.signature());
@@ -238,7 +320,6 @@ class SEP10Service {
    */
   _verifyServerSignature(transaction) {
     const serverKeypair = StellarSdk.Keypair.fromSecret(this.config.serverSigningKey);
-    const serverPublic = serverKeypair.publicKey();
 
     try {
       const serverSignatureValid = transaction.signatures.some(sig => {
@@ -270,7 +351,7 @@ class SEP10Service {
    * Verify the transaction structure matches SEP-0010 challenge format
    * @private
    * @param {Transaction} transaction
-   * @returns {string} Client Stellar public key extracted from operation value
+   * @returns {{ challengeId: string, clientAccount: string }}
    */
   _verifyChallengeStructure(transaction) {
     if (transaction.operations.length !== 1) {
@@ -299,7 +380,26 @@ class SEP10Service {
       );
     }
 
-    return clientAccount;
+    const challengeId = this._extractChallengeIdFromOperation(operation);
+    if (!challengeId) {
+      throw new ValidationError(
+        'Invalid challenge transaction: unexpected operation name',
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+
+    return { challengeId, clientAccount };
+  }
+
+  /**
+   * Extract challenge identifier from manageData operation name
+   * @private
+   */
+  _extractChallengeIdFromOperation(operation) {
+    if (!operation.name || typeof operation.name !== 'string') return null;
+    if (!operation.name.startsWith(this.challengePrefix)) return null;
+    return operation.name.slice(this.challengePrefix.length);
   }
 
   /**

@@ -4,11 +4,11 @@ This feature adds support for Stellar Web Authentication (SEP-0010) as an altern
 
 ## Behavior
 
-- GET `/auth?account=<STELLAR_PUBLIC_KEY>`
+- GET `/auth/challenge?account=<STELLAR_PUBLIC_KEY>`
   - Returns a signed SEP-0010 challenge transaction (XDR) from the server account.
   - Uses `SEP10Service.generateChallenge()`.
 
-- POST `/auth` with `{ transaction: '<SIGNED_CHALLENGE_XDR>' }`
+- POST `/auth/token` with `{ transaction: '<SIGNED_CHALLENGE_XDR>' }`
   - Verifies challenge expiration and signatures.
   - Issues a JWT access token `Bearer` token via `SEP10Service.issueAuthToken()`.
 

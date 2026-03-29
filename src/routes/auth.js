@@ -1,10 +1,10 @@
 /**
- * Auth Routes - JWT Token Issuance and API Key Authentication
+ * Auth Routes - JWT Token Issuance and Stellar SEP-0010 Authentication
  *
- * POST /auth/token   - Exchange a valid API key for an access + refresh token pair
- * POST /auth/refresh - Rotate a refresh token; returns new access + refresh tokens
- * GET  /auth         - Generate SEP-0010 challenge transaction for Stellar authentication
- * POST /auth         - Verify signed SEP-0010 challenge and return JWT token
+ * POST /auth/token/apikey - Exchange a valid API key for an access + refresh token pair
+ * POST /auth/refresh     - Rotate a refresh token; returns new access + refresh tokens
+ * GET  /auth/challenge   - Generate SEP-0010 challenge transaction for Stellar authentication
+ * POST /auth/token       - Verify signed SEP-0010 challenge and return JWT token
  */
 
 const express = require('express');
@@ -15,15 +15,32 @@ const {
   rotateRefreshToken,
 } = require('../services/JwtService');
 const SEP10Service = require('../services/SEP10Service');
+const config = require('../config');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 
+const stellarService = getStellarService();
+const sep10Config = config.sep10 || {};
+const serverSigningKey =
+  config.stellar?.serviceSecretKey ||
+  process.env.SERVICE_SECRET_KEY ||
+  process.env.STELLAR_SECRET ||
+  null;
+
+const sep10Service = serverSigningKey
+  ? new SEP10Service(stellarService, {
+      serverSigningKey,
+      homeDomain: sep10Config.homeDomain || process.env.HOME_DOMAIN || 'localhost',
+      challengeExpiresIn: (sep10Config.challengeTtlSeconds || 300) * 1000,
+    })
+  : null;
+
 /**
- * POST /auth/token
+ * POST /auth/token/apikey
  * Exchange a valid API key for a JWT access token + refresh token pair.
  * Requires: X-API-Key header
  */
-router.post('/token', requireApiKey, async (req, res) => {
+router.post('/token/apikey', requireApiKey, async (req, res) => {
   try {
     const apiKeyId = req.apiKey.id || 0;
     const claims = { role: req.apiKey.role || 'user' };
@@ -93,11 +110,11 @@ router.post('/refresh', async (req, res) => {
 });
 
 /**
- * GET /auth
+ * GET /auth/challenge
  * Returns a SEP-0010 challenge transaction XDR that the client can sign.
  * Query params: account=<stellar_public_key>
  */
-router.get('/', async (req, res) => {
+router.get('/challenge', async (req, res) => {
   if (!sep10Service) {
     return res.status(501).json({
       success: false,
@@ -123,11 +140,11 @@ router.get('/', async (req, res) => {
 });
 
 /**
- * POST /auth
+ * POST /auth/token
  * Verifies a signed SEP-0010 challenge and returns a JWT access token.
  * Body: { transaction: '<signed_tx_xdr>' }
  */
-router.post('/', async (req, res) => {
+router.post('/token', async (req, res) => {
   if (!sep10Service) {
     return res.status(501).json({
       success: false,

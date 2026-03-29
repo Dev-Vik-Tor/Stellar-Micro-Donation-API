@@ -42,7 +42,7 @@ describe('SEP-0010 authentication', () => {
 
   it('GET /auth returns SEP-0010 challenge transaction', async () => {
     const res = await request(app)
-      .get('/auth')
+      .get('/auth/challenge')
       .query({ account: clientKeypair.publicKey() });
 
     expect(res.status).toBe(200);
@@ -53,7 +53,7 @@ describe('SEP-0010 authentication', () => {
 
   it('POST /auth with signed challenge returns JWT access token', async () => {
     const getRes = await request(app)
-      .get('/auth')
+      .get('/auth/challenge')
       .query({ account: clientKeypair.publicKey() });
 
     expect(getRes.status).toBe(200);
@@ -62,7 +62,7 @@ describe('SEP-0010 authentication', () => {
     challengeTx.sign(clientKeypair);
 
     const signRes = await request(app)
-      .post('/auth')
+      .post('/auth/token')
       .send({ transaction: challengeTx.toXDR() });
 
     expect(signRes.status).toBe(200);
@@ -81,7 +81,7 @@ describe('SEP-0010 authentication', () => {
   });
 
   it('GET /auth without account returns 400', async () => {
-    const res = await request(app).get('/auth');
+    const res = await request(app).get('/auth/challenge');
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
     expect(res.body.error.code).toBe('MISSING_ACCOUNT');
@@ -96,7 +96,7 @@ describe('SEP-0010 authentication', () => {
 
   it('POST /auth with malformed transaction returns 401', async () => {
     const res = await request(app)
-      .post('/auth')
+      .post('/auth/token')
       .send({ transaction: 'invalid-xdr' });
 
     expect(res.status).toBe(401);

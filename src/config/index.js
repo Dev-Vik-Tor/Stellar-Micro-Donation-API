@@ -369,6 +369,16 @@ const buildConfig = (env, isProduction, isTest) => {
     logging,
     encryption,
     geoBlocking,
+    sep10: {
+      homeDomain: process.env.HOME_DOMAIN || null,
+      challengeTtlSeconds: parseInteger(
+        process.env.SEP10_CHALLENGE_TTL,
+        300,
+        60,
+        86400,
+        'SEP10_CHALLENGE_TTL'
+      ),
+    },
     taxReceipt,
     app,
   };

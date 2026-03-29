@@ -303,7 +303,7 @@ describe('POST /auth/token and POST /auth/refresh (HTTP)', () => {
   it('POST /auth/token returns 200 with accessToken and refreshToken', async () => {
     const request = require('supertest');
     const app = buildTestApp();
-    const res = await request(app).post('/auth/token').send();
+    const res = await request(app).post('/auth/token/apikey').send();
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data).toHaveProperty('accessToken');
@@ -316,7 +316,7 @@ describe('POST /auth/token and POST /auth/refresh (HTTP)', () => {
     const request = require('supertest');
     const app = buildTestApp();
     // Issue a pair first
-    const issueRes = await request(app).post('/auth/token').send();
+    const issueRes = await request(app).post('/auth/token/apikey').send();
     const { refreshToken } = issueRes.body.data;
 
     const refreshRes = await request(app).post('/auth/refresh').send({ refreshToken });
@@ -345,7 +345,7 @@ describe('POST /auth/token and POST /auth/refresh (HTTP)', () => {
   it('POST /auth/refresh with reused token returns 401 TOKEN_FAMILY_REVOKED', async () => {
     const request = require('supertest');
     const app = buildTestApp();
-    const issueRes = await request(app).post('/auth/token').send();
+    const issueRes = await request(app).post('/auth/token/apikey').send();
     const { refreshToken } = issueRes.body.data;
     // First use — legitimate
     await request(app).post('/auth/refresh').send({ refreshToken });
