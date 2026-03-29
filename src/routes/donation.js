@@ -190,10 +190,22 @@ const createDonationSchema = validateSchema({
         nullable: true,
         maxLength: 128,
       },
+      sdgCategories: {
+        type: 'array',
+        required: false,
+        nullable: true,
+      },
     },
     validate: (body) => {
       if ((body.sourceAsset && !body.sourceAmount) || (!body.sourceAsset && body.sourceAmount)) {
         return 'sourceAsset and sourceAmount must be provided together';
+      }
+      if (body.sdgCategories && Array.isArray(body.sdgCategories)) {
+        const { validateSdgCodes } = require('../services/ImpactMetricService');
+        const { valid, invalid } = validateSdgCodes(body.sdgCategories);
+        if (!valid) {
+          return `Invalid SDG category codes: ${invalid.join(', ')}. Valid codes are SDG1–SDG17.`;
+        }
       }
       // Validate memoHash: must be exactly 32 bytes as hex (64 chars) or base64 (44 chars)
       if (body.memoHash) {
@@ -584,6 +596,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       poolName,
       donorLatitude,
       donorLongitude,
+      sdgCategories,
     } = req.body;
 
     // Determine recipient — either explicit or via routing
@@ -740,6 +753,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
       apiKeyId: req.apiKey ? req.apiKey.id : null,
       apiKeyRole: req.apiKey ? req.apiKey.role : (req.user?.role || 'user'),
       anonymous: anonymous === true,
+      sdgCategories: sdgCategories || [],
     });
 
     // Estimate fee for informational purposes (non-blocking)
