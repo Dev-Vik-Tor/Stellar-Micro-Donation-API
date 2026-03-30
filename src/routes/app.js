@@ -92,6 +92,7 @@ const toolsRoutes = require('./tools');
 const { metricsMiddleware, registry } = require('../utils/metrics');
 const { attachSubscriptionServer } = require('../graphql');
 const sseManager = require('../services/SseManager');
+const claimableBalancesRoutes = require('./claimableBalances');
 
 const app = express();
 
@@ -244,6 +245,7 @@ app.use('/auth', authRoutes);
 app.use('/docs', docsRoutes);
 app.use('/transactions', transactionRoutes);
 app.use('/', corporateMatchingRoutes);
+app.use('/claimable-balances', claimableBalancesRoutes);
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
