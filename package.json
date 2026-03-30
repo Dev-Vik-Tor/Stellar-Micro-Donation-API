@@ -7,7 +7,10 @@
     "start": "node src/routes/app.js",
     "init-db": "node src/scripts/initDB.js",
     "dev": "nodemon src/routes/app.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "test:coverage:ci": "jest --coverage --ci --maxWorkers=2"
   },
   "dependencies": {
     "dotenv": "^16.0.3",
