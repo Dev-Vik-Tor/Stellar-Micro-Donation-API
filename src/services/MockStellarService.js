@@ -56,30 +56,7 @@ class MockStellarService extends StellarServiceInterface {
       const wallet = this.wallets.get(publicKey);
       if (!wallet) throw new ValidationError('Wallet not found');
       return wallet.inflationDestination || null;
-        /**
-         * Given a secret key, return the corresponding public key from the mock wallet map.
-         * @param {string} secretKey
-         * @returns {string|null}
-         */
-        _secretToPublic(secretKey) {
-          for (const [pub, wallet] of this.wallets.entries()) {
-            if (wallet.secretKey === secretKey) return pub;
-          }
-          return null;
-        }
-      /**
-       * List mock claimable balances claimable by the given public key.
-       * @param {string} publicKey - Stellar public key
-       * @returns {Promise<Array>} List of claimable balances
-       */
-      async listClaimableBalances(publicKey) {
-        await this._simulateNetworkDelay();
-        this._checkRateLimit();
-        if (!this.claimableBalances) return [];
-        return Array.from(this.claimableBalances.values()).filter(cb =>
-          !cb.claimed && cb.claimants.some(c => c.destination === publicKey)
-        );
-      }
+    }
     /**
      * Create a mock claimable balance.
      * @param {string} sourceSecret - Secret key of the source account
@@ -3102,6 +3079,123 @@ class MockStellarService extends StellarServiceInterface {
     }
 
     return { ...(wallet.dataEntries || {}) };
+  }
+
+  /**
+   * Deposit assets into a liquidity pool (AMM).
+   * @param {string} secret - Source account secret key
+   * @param {Object} assetA - First asset { type, code, issuer }
+   * @param {Object} assetB - Second asset { type, code, issuer }
+   * @param {string|number} maxAmountA - Max amount of assetA to deposit
+   * @param {string|number} maxAmountB - Max amount of assetB to deposit
+   * @returns {Promise<{poolId: string, sharesReceived: string, transactionId: string, ledger: number}>}
+   */
+  async depositLiquidityPool(secret, assetA, assetB, maxAmountA, maxAmountB) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+    this._validateSecretKey(secret);
+
+    const wallet = this._findWalletBySecret(secret);
+    if (!wallet) throw new ValidationError('Invalid secret key');
+
+    const amtA = parseFloat(maxAmountA);
+    const amtB = parseFloat(maxAmountB);
+    if (isNaN(amtA) || amtA <= 0) throw new ValidationError('maxAmountA must be a positive number');
+    if (isNaN(amtB) || amtB <= 0) throw new ValidationError('maxAmountB must be a positive number');
+
+    const keyA = getAssetKey(assetA);
+    const keyB = getAssetKey(assetB);
+    const balA = parseFloat(wallet.assetBalances[keyA] || '0');
+    const balB = parseFloat(wallet.assetBalances[keyB] || '0');
+
+    if (balA < amtA) throw new BusinessLogicError(ERROR_CODES.INSUFFICIENT_BALANCE, `Insufficient balance for ${keyA}`);
+    if (balB < amtB) throw new BusinessLogicError(ERROR_CODES.INSUFFICIENT_BALANCE, `Insufficient balance for ${keyB}`);
+
+    // Deduct deposited amounts
+    this._setWalletAssetBalance(wallet, assetA, balA - amtA);
+    this._setWalletAssetBalance(wallet, assetB, balB - amtB);
+
+    // Derive a deterministic pool ID from the two asset keys
+    const poolId = `mock_pool_${require('crypto').createHash('sha256').update([keyA, keyB].sort().join('|')).digest('hex').slice(0, 16)}`;
+
+    if (!this._liquidityPools) this._liquidityPools = new Map();
+    const pool = this._liquidityPools.get(poolId) || { poolId, assetA, assetB, totalShares: 0, reserveA: 0, reserveB: 0, earnings: {}, deposits: [] };
+
+    const shares = Math.sqrt(amtA * amtB);
+    pool.totalShares += shares;
+    pool.reserveA += amtA;
+    pool.reserveB += amtB;
+    pool.deposits.push({ depositor: wallet.publicKey, amtA, amtB, shares, depositedAt: new Date().toISOString() });
+    this._liquidityPools.set(poolId, pool);
+
+    // Track shares per depositor
+    if (!wallet.poolShares) wallet.poolShares = {};
+    wallet.poolShares[poolId] = (wallet.poolShares[poolId] || 0) + shares;
+
+    const transactionId = `mock_tx_${require('crypto').randomBytes(8).toString('hex')}`;
+    return { poolId, sharesReceived: shares.toFixed(7), transactionId, ledger: Math.floor(Math.random() * 1000000) + 1 };
+  }
+
+  /**
+   * Withdraw assets from a liquidity pool.
+   * @param {string} secret - Source account secret key
+   * @param {string} poolId - Liquidity pool ID
+   * @param {string|number} amount - Number of pool shares to redeem
+   * @returns {Promise<{amountA: string, amountB: string, transactionId: string, ledger: number}>}
+   */
+  async withdrawLiquidityPool(secret, poolId, amount) {
+    await this._simulateNetworkDelay();
+    this._checkRateLimit();
+    this._simulateFailure();
+    this._validateSecretKey(secret);
+
+    const wallet = this._findWalletBySecret(secret);
+    if (!wallet) throw new ValidationError('Invalid secret key');
+
+    const shares = parseFloat(amount);
+    if (isNaN(shares) || shares <= 0) throw new ValidationError('amount must be a positive number');
+
+    if (!this._liquidityPools) throw new NotFoundError('Pool not found', ERROR_CODES.NOT_FOUND);
+    const pool = this._liquidityPools.get(poolId);
+    if (!pool) throw new NotFoundError('Pool not found', ERROR_CODES.NOT_FOUND);
+
+    const ownedShares = (wallet.poolShares && wallet.poolShares[poolId]) || 0;
+    if (ownedShares < shares) throw new BusinessLogicError(ERROR_CODES.INSUFFICIENT_BALANCE, 'Insufficient pool shares');
+
+    const fraction = shares / pool.totalShares;
+    const amtA = pool.reserveA * fraction;
+    const amtB = pool.reserveB * fraction;
+
+    pool.totalShares -= shares;
+    pool.reserveA -= amtA;
+    pool.reserveB -= amtB;
+    wallet.poolShares[poolId] -= shares;
+
+    this._setWalletAssetBalance(wallet, pool.assetA, parseFloat(wallet.assetBalances[getAssetKey(pool.assetA)] || '0') + amtA);
+    this._setWalletAssetBalance(wallet, pool.assetB, parseFloat(wallet.assetBalances[getAssetKey(pool.assetB)] || '0') + amtB);
+
+    const transactionId = `mock_tx_${require('crypto').randomBytes(8).toString('hex')}`;
+    return { amountA: amtA.toFixed(7), amountB: amtB.toFixed(7), transactionId, ledger: Math.floor(Math.random() * 1000000) + 1 };
+  }
+
+  /**
+   * Get earnings for a liquidity pool.
+   * @param {string} poolId - Liquidity pool ID
+   * @returns {Promise<{poolId: string, totalShares: number, reserveA: number, reserveB: number, earnings: Object}>}
+   */
+  async getLiquidityPoolEarnings(poolId) {
+    await this._simulateNetworkDelay();
+    if (!this._liquidityPools) throw new NotFoundError('Pool not found', ERROR_CODES.NOT_FOUND);
+    const pool = this._liquidityPools.get(poolId);
+    if (!pool) throw new NotFoundError('Pool not found', ERROR_CODES.NOT_FOUND);
+    return {
+      poolId: pool.poolId,
+      totalShares: pool.totalShares,
+      reserveA: pool.reserveA,
+      reserveB: pool.reserveB,
+      earnings: pool.earnings || {}
+    };
   }
 }
 

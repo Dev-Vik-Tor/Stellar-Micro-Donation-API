@@ -587,6 +587,8 @@ class AuditLogExportService {
         record_count INTEGER NOT NULL,
         file_path TEXT,
         error_message TEXT,
+        signed_url TEXT,
+        signed_url_expires_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT,
         FOREIGN KEY (api_key_id) REFERENCES api_keys(id)
@@ -594,6 +596,151 @@ class AuditLogExportService {
     `);
 
     log.info('AUDIT_EXPORT_SERVICE', 'Export tables initialized');
+  }
+
+  /**
+   * Queue an async export job (Issue #604).
+   * Always processes asynchronously and returns a job ID immediately.
+   * @param {string} apiKeyId - API key / user ID
+   * @param {Object} options
+   * @param {string|null} options.startDate
+   * @param {string|null} options.endDate
+   * @param {string|null} options.eventType - maps to action filter
+   * @param {string} options.format - 'json' or 'csv'
+   * @returns {Promise<{jobId: string, status: string}>}
+   */
+  static async queueExportJob(apiKeyId, options = {}) {
+    const { startDate, endDate, eventType, format = EXPORT_FORMAT.JSON } = options;
+
+    if (!Object.values(EXPORT_FORMAT).includes(format)) {
+      throw new ValidationError(`Invalid format: ${format}`, null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const jobId = this.generateExportId();
+
+    await Database.run(
+      `INSERT INTO audit_log_exports (
+        export_id, api_key_id, start_date, end_date, action_filter,
+        format, status, record_count, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [jobId, apiKeyId, startDate || null, endDate || null, eventType || null,
+        format, EXPORT_STATUS.PENDING, 0, new Date().toISOString()]
+    );
+
+    // Process asynchronously
+    setImmediate(async () => {
+      try {
+        await this.updateExportStatus(jobId, EXPORT_STATUS.PROCESSING);
+
+        const logs = await this.queryAuditLogs(apiKeyId, {
+          startDate, endDate, action: eventType, limit: 100000
+        });
+
+        let content;
+        if (format === EXPORT_FORMAT.CSV) {
+          content = this.convertToCSV(logs);
+        } else {
+          content = this.convertToJSON(logs);
+        }
+
+        // Generate signed URL token (HMAC-based, expires in configured duration)
+        const expiryMs = parseInt(process.env.SIGNED_URL_EXPIRY_MS || String(60 * 60 * 1000));
+        const expiresAt = new Date(Date.now() + expiryMs).toISOString();
+        const token = crypto.createHmac('sha256', process.env.ENCRYPTION_KEY || 'dev-secret')
+          .update(`${jobId}:${expiresAt}`)
+          .digest('hex');
+        const signedUrl = `/admin/audit-logs/export/${jobId}/download?token=${token}&expires=${encodeURIComponent(expiresAt)}&format=${format}`;
+
+        // Store content in memory cache keyed by jobId
+        if (!AuditLogExportService._contentCache) AuditLogExportService._contentCache = new Map();
+        AuditLogExportService._contentCache.set(jobId, { content, format });
+
+        await Database.run(
+          `UPDATE audit_log_exports SET status = ?, record_count = ?, signed_url = ?, signed_url_expires_at = ?, updated_at = ? WHERE export_id = ?`,
+          [EXPORT_STATUS.COMPLETED, logs.length, signedUrl, expiresAt, new Date().toISOString(), jobId]
+        );
+
+        log.info('AUDIT_EXPORT_SERVICE', 'Async export job completed', { jobId, records: logs.length });
+      } catch (err) {
+        await this.updateExportStatus(jobId, EXPORT_STATUS.FAILED, null, err.message);
+        log.error('AUDIT_EXPORT_SERVICE', 'Async export job failed', { jobId, error: err.message });
+      }
+    });
+
+    return { jobId, status: EXPORT_STATUS.PENDING };
+  }
+
+  /**
+   * Get the status of an export job (Issue #604).
+   * @param {string} jobId
+   * @returns {Promise<Object>}
+   */
+  static async getJobStatus(jobId) {
+    const row = await Database.get(
+      `SELECT export_id, status, record_count, format, created_at, updated_at, error_message
+       FROM audit_log_exports WHERE export_id = ?`,
+      [jobId]
+    );
+
+    if (!row) throw new NotFoundError('Export job not found', ERROR_CODES.NOT_FOUND);
+
+    return {
+      jobId: row.export_id,
+      status: row.status,
+      recordCount: row.record_count,
+      format: row.format,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      errorMessage: row.error_message || null
+    };
+  }
+
+  /**
+   * Get a signed download URL for a completed export job (Issue #604).
+   * Returns { pending: true } if the job is not yet complete.
+   * @param {string} jobId
+   * @param {Object} [options]
+   * @param {string} [options.format] - Override format for download
+   * @returns {Promise<Object>}
+   */
+  static async getSignedDownloadUrl(jobId, options = {}) {
+    const row = await Database.get(
+      `SELECT export_id, status, format, signed_url, signed_url_expires_at, record_count
+       FROM audit_log_exports WHERE export_id = ?`,
+      [jobId]
+    );
+
+    if (!row) throw new NotFoundError('Export job not found', ERROR_CODES.NOT_FOUND);
+
+    if (row.status !== EXPORT_STATUS.COMPLETED) {
+      return { pending: true, status: row.status };
+    }
+
+    // Check if signed URL has expired; regenerate if so
+    if (row.signed_url_expires_at && new Date(row.signed_url_expires_at) < new Date()) {
+      const expiryMs = parseInt(process.env.SIGNED_URL_EXPIRY_MS || String(60 * 60 * 1000));
+      const expiresAt = new Date(Date.now() + expiryMs).toISOString();
+      const fmt = options.format || row.format;
+      const token = crypto.createHmac('sha256', process.env.ENCRYPTION_KEY || 'dev-secret')
+        .update(`${jobId}:${expiresAt}`)
+        .digest('hex');
+      const signedUrl = `/admin/audit-logs/export/${jobId}/download?token=${token}&expires=${encodeURIComponent(expiresAt)}&format=${fmt}`;
+
+      await Database.run(
+        `UPDATE audit_log_exports SET signed_url = ?, signed_url_expires_at = ?, updated_at = ? WHERE export_id = ?`,
+        [signedUrl, expiresAt, new Date().toISOString(), jobId]
+      );
+
+      return { jobId, signedUrl, expiresAt, format: fmt, recordCount: row.record_count };
+    }
+
+    return {
+      jobId: row.export_id,
+      signedUrl: row.signed_url,
+      expiresAt: row.signed_url_expires_at,
+      format: options.format || row.format,
+      recordCount: row.record_count
+    };
   }
 }
 

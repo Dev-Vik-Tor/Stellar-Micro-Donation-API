@@ -193,6 +193,29 @@ const Transaction = require('./models/transaction');
 const donationValidator = require('../utils/donationValidator');
 const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 
+const donationService = new DonationService();
+
+const donationIdParamSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'string', required: true, trim: true, minLength: 1 }
+    }
+  }
+});
+
+const updateDonationStatusSchema = validateSchema({
+  params: {
+    fields: {
+      id: { type: 'string', required: true, trim: true, minLength: 1 }
+    }
+  },
+  body: {
+    fields: {
+      status: { type: 'string', required: true, enum: ['pending', 'confirmed', 'failed', 'cancelled'] }
+    }
+  }
+});
+
 /**
  * GET /donations/cost-breakdown
  * Return an itemized cost breakdown for a proposed donation.
@@ -211,9 +234,9 @@ router.get('/cost-breakdown', checkPermission(PERMISSIONS.DONATIONS_READ), (req,
   try {
     const { amount, surgeFeeMultiplier, xlmUsdRate } = req.query;
 
-    if (!transactionHash) {
+    if (!amount) {
       return res.status(400).json(
-        buildErrorResponse([{ code: 'MISSING_TRANSACTION_HASH', receivedValue: transactionHash }])
+        buildErrorResponse([{ code: 'MISSING_AMOUNT', receivedValue: amount }])
       );
     }
 
@@ -286,11 +309,19 @@ router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, async (r
       return res.status(400).json({ success: false, error: { message: 'email is required' } });
     }
 
-     if (!idempotencyKey) {
+    const idempotencyKey = req.get('X-Idempotency-Key');
+    if (!idempotencyKey) {
       return res.status(400).json(
         buildErrorResponse([{ code: 'MISSING_IDEMPOTENCY_KEY', receivedValue: undefined }])
       );
     }
+    const transaction = Transaction.getById(req.params.id);
+    if (!transaction) {
+      return res.status(404).json({ success: false, error: { message: 'Donation not found' } });
+    }
+    await ReceiptService.sendEmail(transaction, email);
+    return res.json({ success: true, message: 'Receipt sent' });
+  } catch (error) {
     next(error);
   }
 });
@@ -314,13 +345,6 @@ router.get('/:id/memo/decrypt', requireApiKey, donationIdParamSchema, async (req
     const { id } = req.params;
     const { recipientSecret } = req.query;
 
-    if (!amount || !recipient) {
-      const errors = [];
-      if (!amount) errors.push({ code: 'MISSING_AMOUNT', receivedValue: amount });
-      if (!recipient) errors.push({ code: 'MISSING_RECIPIENT', receivedValue: recipient });
-      return res.status(400).json(buildErrorResponse(errors));
-    }
-
     const transaction = Transaction.getById(id);
     if (!transaction) {
       return res.status(404).json({
@@ -329,32 +353,13 @@ router.get('/:id/memo/decrypt', requireApiKey, donationIdParamSchema, async (req
       });
     }
 
-    // Validate amount type and basic checks
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json(
-        buildErrorResponse([{ code: parsedAmount <= 0 ? 'AMOUNT_TOO_LOW' : 'INVALID_AMOUNT_TYPE', receivedValue: amount }])
-      );
+    if (!recipientSecret) {
+      return res.status(400).json({ success: false, error: { message: 'recipientSecret is required' } });
     }
 
-    // Validate amount against configured limits
-    const amountValidation = donationValidator.validateAmount(parsedAmount);
-    if (!amountValidation.valid) {
-      return res.status(400).json(
-        buildErrorResponse([{ code: amountValidation.code, receivedValue: parsedAmount }])
-      );
-    }
-
-    // Validate daily limit if donor is specified
-    if (donor && donor !== 'Anonymous') {
-      const dailyTotal = Transaction.getDailyTotalByDonor(donor);
-      const dailyValidation = donationValidator.validateDailyLimit(parsedAmount, dailyTotal);
-      
-      if (!dailyValidation.valid) {
-        return res.status(400).json(
-          buildErrorResponse([{ code: dailyValidation.code, receivedValue: parsedAmount }])
-        );
-      }
-    });
+    const MemoEncryptionService = require('../services/MemoEncryptionService');
+    const decrypted = await MemoEncryptionService.decrypt(transaction.memo, recipientSecret);
+    return res.json({ success: true, data: { memo: decrypted } });
   } catch (error) {
     next(error);
   }
@@ -726,18 +731,23 @@ router.post('/cross-asset', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), 
       memo,
     } = req.body;
 
-    if (!status) {
+    if (!sourceSecret || !destPublicKey) {
       return res.status(400).json(
-        buildErrorResponse([{ code: 'MISSING_STATUS', receivedValue: status }])
+        buildErrorResponse([{ code: 'MISSING_REQUIRED_FIELDS', receivedValue: null }])
       );
     }
 
-    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json(
-        buildErrorResponse([{ code: 'INVALID_STATUS', receivedValue: status }])
-      );
-    }
+    const stellarService = getStellarService();
+    const sendAsset = parseAssetInput(rawSendAsset);
+    const destAsset = parseAssetInput(rawDestAsset);
+
+    const result = await stellarService.pathPayment(
+      sourceSecret, sendAsset, sendAmount, destPublicKey, destAsset, destAmount,
+      { slippageTolerance, memo }
+    );
+
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
     next(error);
   }
 });

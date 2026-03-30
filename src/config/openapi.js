@@ -57,7 +57,9 @@ const options = {
     path.join(__dirname, '../routes/stream.js'),
     path.join(__dirname, '../routes/transaction.js'),
     path.join(__dirname, '../routes/stats.js'),
-    path.join(__dirname, '../routes/health.js'),
+    path.join(__dirname, '../routes/app.js'),
+    path.join(__dirname, '../routes/liquidity-pools.js'),
+    path.join(__dirname, '../routes/admin/auditLogExport.js'),
   ],
 };
 

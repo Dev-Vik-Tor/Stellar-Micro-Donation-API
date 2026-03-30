@@ -245,6 +245,7 @@ app.use('/docs', docsRoutes);
 app.use('/transactions', transactionRoutes);
 app.use('/', corporateMatchingRoutes);
 app.use('/claimable-balances', claimableBalancesRoutes);
+app.use('/liquidity-pools', require('./liquidity-pools'));
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
@@ -378,6 +379,9 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
 
 // Transaction inspection (admin only)
 app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), adminInspectRoutes);
+
+// Audit log export (Issue #604) - async jobs with signed download URLs
+app.use('/admin/audit-logs/export', require('./admin/auditLogExport'));
 
 // Audit logs endpoint (admin only)
 app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {

@@ -5,11 +5,21 @@ process.env.NODE_ENV = 'test';
 
 // Polyfill for legacy test patterns
 if (typeof jest !== 'undefined') {
-  jest.fn.prototype.resolves = function(value) {
-    return this.mockResolvedValue(value);
-  };
+  try {
+    Object.defineProperty(jest.fn.prototype, 'resolves', {
+      configurable: true,
+      value: function(value) {
+        return this.mockResolvedValue(value);
+      }
+    });
 
-  jest.fn.prototype.rejects = function(error) {
-    return this.mockRejectedValue(error);
-  };
+    Object.defineProperty(jest.fn.prototype, 'rejects', {
+      configurable: true,
+      value: function(error) {
+        return this.mockRejectedValue(error);
+      }
+    });
+  } catch (_e) {
+    // Already defined or read-only — skip silently
+  }
 }
