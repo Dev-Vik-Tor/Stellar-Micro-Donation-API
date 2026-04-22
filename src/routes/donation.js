@@ -405,6 +405,28 @@ router.get('/:id/certificate', checkPermission(PERMISSIONS.DONATIONS_READ), dona
 });
 
 /**
+ * GET /donations/recent
+ * Get recent donations, ordered by creation date descending.
+ * Must be registered before /:id to prevent Express matching "recent" as an id.
+ *
+ * Query params:
+ *   - limit {integer} max results to return (default 10, max 100)
+ */
+router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
+    const Database = require('../utils/database');
+    const rows = await Database.query(
+      `SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?`,
+      [limit]
+    );
+    res.json({ success: true, data: rows, count: rows.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /donations/:id
  * Get a specific donation
  */
