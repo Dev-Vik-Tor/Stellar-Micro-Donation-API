@@ -242,6 +242,14 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
       );
     }
 
+    // Create wallet metadata
+    const wallet = await walletService.createWallet({
+      address,
+      label,
+      ownerName,
+      sponsored: sponsored || false
+    });
+
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.WALLET_OPERATION,
       action: AuditLogService.ACTION.WALLET_CREATED,
