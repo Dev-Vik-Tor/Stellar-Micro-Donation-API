@@ -147,7 +147,10 @@ async function getFullHealth(stellarService, networkStatusService) {
   let status;
   if (database.status === 'unhealthy') {
     status = 'unhealthy';
-  } else if (stellar.status === 'unhealthy' || idempotency.status === 'unhealthy') {
+  } else if (stellar.status === 'unhealthy') {
+    // Stellar is a critical dependency for a donation API — treat as unhealthy
+    status = 'unhealthy';
+  } else if (idempotency.status === 'unhealthy') {
     status = 'degraded';
   } else {
     status = 'healthy';

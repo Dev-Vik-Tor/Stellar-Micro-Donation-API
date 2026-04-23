@@ -309,7 +309,7 @@ app.get('/health', async (req, res) => {
   health.requestId = req.id;
   health.transactionSync = transactionSyncScheduler.getSyncStatus();
   
-  const httpStatus = health.status === 'unhealthy' ? 503 : 200;
+  const httpStatus = health.status === 'healthy' ? 200 : 503;
   return res.status(httpStatus).json(health);
 });
 
@@ -504,91 +504,110 @@ process.on('unhandledRejection', (reason, promise) => {
   });
 });
 
+const PORT = config.server.port;
+
 let cleanupInterval = null;
 
 async function startServer() {
   try {
     await logStartupDiagnostics();
-    const { runMigrations } = require('../utils/migrationRunner');
-    await runMigrations();
-    await initializeApiKeysTable();
-    
-    // Initialize feature flags table
-    const { initializeFeatureFlagsTable, loadFlagsFromEnv } = require('../utils/featureFlags');
-    await initializeFeatureFlagsTable();
-    if (process.env.FEATURE_FLAGS) {
-      await loadFlagsFromEnv(process.env.FEATURE_FLAGS);
-    }
-    
-    await WebhookService.initTable();
-    await validateRBAC();
 
-    const server = app.listen(PORT, async () => {
-      // Attach GraphQL WebSocket subscription server
-      attachSubscriptionServer(server);
+    // #714: Bind the HTTP port immediately so /health/live is reachable right away.
+    // Critical DB/schema init and background services run asynchronously after bind.
+    const server = app.listen(PORT);
 
-      // Attach real-time balance streaming WebSocket
-      require('../services/websocketService').attach(server);
-
-      // Only start background workers and jobs if not in test environment
-      if (process.env.NODE_ENV !== 'test') {
-        const stopQuotaResetJob = startQuotaResetJob();
-        server.stopQuotaResetJob = stopQuotaResetJob;
-
-        // Start pledge expiry worker
-        require('../workers/expiryWorker').start();
-
-        recurringDonationScheduler.start();
-        reconciliationService.start();
-        auditLogRetentionService.start();
-        transactionSyncScheduler.start();
-        sseManager.start();
-        
-        runCleanup(); // Run once on startup
-        cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
+    // #715: Handle EADDRINUSE with a clear, actionable error message.
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        log.error('APP', `Port ${PORT} is already in use. Stop the existing process or set a different PORT in your .env file.`, { port: PORT });
+        process.exit(1);
       }
-      
-      // Initialize and start network status monitoring
-      networkStatusService.on('network.degraded', (status) => {
-        log.warn('NETWORK_STATUS', 'Network status degraded', { status });
-      });
+      throw err;
+    });
 
+    await new Promise((resolve) => server.once('listening', resolve));
+
+    log.info('APP', 'HTTP server listening', {
+      port: PORT,
+      healthCheck: `http://localhost:${PORT}/health`,
+    });
+
+    // Attach WebSocket servers immediately after bind
+    attachSubscriptionServer(server);
+    require('../services/websocketService').attach(server);
+
+    // Run critical init (DB migrations, table setup) asynchronously after port is bound.
+    // /health/ready will return false until this completes.
+    setImmediate(async () => {
       try {
-        await networkStatusService.initialize();
-      } catch (err) {
-        log.error('APP', 'Failed to initialize NetworkStatusService', {
-          error: err.message,
+        const { runMigrations } = require('../utils/migrationRunner');
+        await runMigrations();
+        await initializeApiKeysTable();
+
+        const { initializeFeatureFlagsTable, loadFlagsFromEnv } = require('../utils/featureFlags');
+        await initializeFeatureFlagsTable();
+        if (process.env.FEATURE_FLAGS) {
+          await loadFlagsFromEnv(process.env.FEATURE_FLAGS);
+        }
+
+        await WebhookService.initTable();
+        await validateRBAC();
+
+        // Only start background workers and jobs if not in test environment
+        if (process.env.NODE_ENV !== 'test') {
+          const stopQuotaResetJob = startQuotaResetJob();
+          server.stopQuotaResetJob = stopQuotaResetJob;
+
+          require('../workers/expiryWorker').start();
+          recurringDonationScheduler.start();
+          reconciliationService.start();
+          auditLogRetentionService.start();
+          transactionSyncScheduler.start();
+          sseManager.start();
+
+          runCleanup();
+          cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
+        }
+
+        // Initialize network status monitoring
+        networkStatusService.on('network.degraded', (status) => {
+          log.warn('NETWORK_STATUS', 'Network status degraded', { status });
         });
-      }
+        try {
+          await networkStatusService.initialize();
+        } catch (err) {
+          log.error('APP', 'Failed to initialize NetworkStatusService', { error: err.message });
+        }
 
-      const { startCleanup } = require('../utils/replayDetector');
-      const replayConfig = require('../config/replayDetection');
-      replayCleanupTimer = startCleanup(replayDetectionMiddleware.trackingStore, replayConfig);
+        const { startCleanup } = require('../utils/replayDetector');
+        const replayConfig = require('../config/replayDetection');
+        replayCleanupTimer = startCleanup(replayDetectionMiddleware.trackingStore, replayConfig);
 
-      // Initialize Leaderboard SSE for real-time updates
-      try {
-        const LeaderboardSSE = require('../services/LeaderboardSSE');
-        LeaderboardSSE.initLeaderboardSSE();
-      } catch (err) {
-        log.error('APP', 'Failed to initialize LeaderboardSSE', {
-          error: err.message,
-        });
-      }
+        try {
+          const LeaderboardSSE = require('../services/LeaderboardSSE');
+          LeaderboardSSE.initLeaderboardSSE();
+        } catch (err) {
+          log.error('APP', 'Failed to initialize LeaderboardSSE', { error: err.message });
+        }
 
-      log.info('APP', 'API started', {
-        port: PORT,
-        network: config.network,
-        healthCheck: `http://localhost:${PORT}/health`
-      });
-
-      if (log.isDebugMode) {
-        log.debug('APP', 'Debug mode enabled - verbose logging active');
-        log.debug('APP', 'Configuration loaded', {
+        log.info('APP', 'API ready', {
           port: PORT,
-          network: stellarConfig.network,
+          network: config.network,
           healthCheck: `http://localhost:${PORT}/health`,
-          environment: config.server.env,
         });
+
+        if (log.isDebugMode) {
+          log.debug('APP', 'Debug mode enabled - verbose logging active');
+          log.debug('APP', 'Configuration loaded', {
+            port: PORT,
+            network: stellarConfig.network,
+            healthCheck: `http://localhost:${PORT}/health`,
+            environment: config.server.env,
+          });
+        }
+      } catch (initErr) {
+        log.error('APP', 'Background initialization failed', { error: initErr.message });
+        process.exit(1);
       }
     });
 
