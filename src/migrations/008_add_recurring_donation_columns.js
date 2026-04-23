@@ -1,20 +1,10 @@
-/**
- * Migration: Add missing columns to recurring_donations table
- * Issue #683: Missing columns cause scheduler to crash on startup
- * 
- * Adds:
- * - customIntervalDays: Support for custom interval scheduling
- * - maxExecutions: Cap on total executions
- * - webhookUrl: Webhook notification on completion
- * - failureCount: Track consecutive failures
- * - lastExecutionDate: Track last execution time
- */
+'use strict';
 
-const Database = require('../utils/database');
+exports.name = '008_add_recurring_donation_columns';
 
-async function up() {
+exports.up = async (db) => {
   try {
-    const columns = await Database.all(
+    const columns = await db.all(
       "PRAGMA table_info(recurring_donations)"
     );
     
@@ -47,7 +37,7 @@ async function up() {
           break;
       }
 
-      await Database.run(
+      await db.run(
         `ALTER TABLE recurring_donations ADD COLUMN ${col} ${columnDef}`
       );
       console.log(`✓ Added ${col} column to recurring_donations table`);
@@ -60,15 +50,8 @@ async function up() {
     console.error('✗ Migration failed:', error.message);
     throw error;
   }
-}
+};
 
-async function down() {
-  try {
-    console.log('⚠ Rollback not supported for this migration (SQLite limitation)');
-  } catch (error) {
-    console.error('✗ Rollback failed:', error.message);
-    throw error;
-  }
-}
-
-module.exports = { up, down };
+exports.down = async (db) => {
+  console.log('⚠ Rollback not supported for this migration (SQLite limitation)');
+};

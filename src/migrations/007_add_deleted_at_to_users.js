@@ -1,21 +1,17 @@
-/**
- * Migration: Add deleted_at column to users table
- * Issue #682: Missing deleted_at column causes cleanup job to crash
- */
+'use strict';
 
-const Database = require('../utils/database');
+exports.name = '007_add_deleted_at_to_users';
 
-async function up() {
+exports.up = async (db) => {
   try {
-    // Check if column already exists
-    const columns = await Database.all(
+    const columns = await db.all(
       "PRAGMA table_info(users)"
     );
     
     const hasDeletedAt = columns.some(col => col.name === 'deleted_at');
     
     if (!hasDeletedAt) {
-      await Database.run(
+      await db.run(
         `ALTER TABLE users ADD COLUMN deleted_at DATETIME DEFAULT NULL`
       );
       console.log('✓ Added deleted_at column to users table');
@@ -26,16 +22,8 @@ async function up() {
     console.error('✗ Migration failed:', error.message);
     throw error;
   }
-}
+};
 
-async function down() {
-  try {
-    // SQLite doesn't support DROP COLUMN easily, so we skip rollback
-    console.log('⚠ Rollback not supported for this migration (SQLite limitation)');
-  } catch (error) {
-    console.error('✗ Rollback failed:', error.message);
-    throw error;
-  }
-}
-
-module.exports = { up, down };
+exports.down = async (db) => {
+  console.log('⚠ Rollback not supported for this migration (SQLite limitation)');
+};
