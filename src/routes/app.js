@@ -190,6 +190,9 @@ app.use(require('../middleware/blockCheck'));
 // Request/Response logging middleware
 app.use(logger.middleware());
 
+// Structured access log middleware (#721) — one entry per request with requestId, timing, status
+app.use(require('../middleware/accessLog')());
+
 // Abuse detection (observability only - no blocking)
 app.use(abuseDetectionMiddleware);
 

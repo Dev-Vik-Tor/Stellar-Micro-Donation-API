@@ -164,6 +164,34 @@ class RecurringDonationScheduler {
       try {
         const now = new Date().toISOString();
 
+        // Detect orphaned schedules (donor or recipient no longer exists) and suspend them
+        const orphanedSchedules = await Database.query(
+          `SELECT rd.id
+           FROM recurring_donations rd
+           WHERE rd.status = ?
+             AND (
+               NOT EXISTS (SELECT 1 FROM users WHERE id = rd.donorId)
+               OR NOT EXISTS (SELECT 1 FROM users WHERE id = rd.recipientId)
+             )`,
+          [SCHEDULE_STATUS.ACTIVE]
+        );
+
+        for (const orphan of orphanedSchedules) {
+          const reason = 'Donor or recipient user no longer exists';
+          await Database.run(
+            `UPDATE recurring_donations
+             SET status = 'orphaned', lastFailureReason = ?
+             WHERE id = ?`,
+            [reason, orphan.id]
+          );
+          log.warn('RECURRING_SCHEDULER', 'Schedule marked as orphaned', {
+            scheduleId: orphan.id,
+            reason,
+            correlationId,
+            traceId,
+          });
+        }
+
         const dueSchedules = await Database.query(
           `SELECT
             rd.id,
@@ -295,7 +323,7 @@ class RecurringDonationScheduler {
             }
           }
 
-          await this.handleFailedExecution(schedule, lastError);
+          await this.handlePersistentFailure(schedule, lastError);
         } finally {
           this.executingSchedules.delete(schedule.id);
         }
@@ -325,26 +353,49 @@ class RecurringDonationScheduler {
       const { correlationId, traceId } = getCorrelationSummary();
 
       try {
-        // 1. Send payment
-        const txResult = await this.stellarService.sendPayment(
-          schedule.donorPublicKey,
-          schedule.recipientPublicKey,
-          schedule.amount,
-          `Recurring donation (Schedule #${schedule.id})`
+        // 1. Generate deterministic idempotency key for this execution cycle
+        const executionDate = schedule.nextExecutionDate
+          ? new Date(schedule.nextExecutionDate).toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0];
+        const idempotencyKey = `recurring-${schedule.id}-${executionDate}`;
+
+        // Check if this execution was already submitted (idempotency guard)
+        const existing = await Database.get(
+          `SELECT id FROM transactions WHERE memo = ? AND senderId = ? AND receiverId = ?`,
+          [idempotencyKey, schedule.donorId, schedule.recipientId]
         );
 
-        // 2. Record transaction
-        await Database.run(
-          `INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp)
-           VALUES (?, ?, ?, ?, ?)`,
-          [
-            schedule.donorId,
-            schedule.recipientId,
+        let txResult;
+        if (existing) {
+          log.info('RECURRING_SCHEDULER', 'Idempotency key already used — skipping Stellar payment', {
+            scheduleId: schedule.id,
+            idempotencyKey,
+            correlationId,
+            traceId,
+          });
+          txResult = { hash: null };
+        } else {
+          // 2. Send payment
+          txResult = await this.stellarService.sendPayment(
+            schedule.donorPublicKey,
+            schedule.recipientPublicKey,
             schedule.amount,
-            `Recurring donation (Schedule #${schedule.id})`,
-            new Date().toISOString(),
-          ]
-        );
+            `Recurring donation (Schedule #${schedule.id})`
+          );
+
+          // 3. Record transaction with idempotency key as memo
+          await Database.run(
+            `INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              schedule.donorId,
+              schedule.recipientId,
+              schedule.amount,
+              idempotencyKey,
+              new Date().toISOString(),
+            ]
+          );
+        }
 
         // 3. Calculate next execution date
         const nextDate = this.calculateNextExecutionDate(
