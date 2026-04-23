@@ -38,15 +38,24 @@ const DEFAULT_SLOW_QUERY_BUFFER_SIZE = 100;
 const MAX_SLOW_QUERY_ENTRIES = 1000;
 const SLOW_QUERY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+<<<<<<< fix/issues-686-689
+// Issue #688: Use DB_PATH from environment or config, with sensible default
+const getDbPath = () => {
+=======
 // Resolve database path from environment or use default
 const getDBPath = () => {
+>>>>>>> main
   if (process.env.DB_PATH) {
     return process.env.DB_PATH;
   }
   return path.join(__dirname, '../../data/stellar_donations.db');
 };
 
+<<<<<<< fix/issues-686-689
+const DB_PATH = getDbPath();
+=======
 const DB_PATH = getDBPath();
+>>>>>>> main
 
 class Database {
   static get poolState() {

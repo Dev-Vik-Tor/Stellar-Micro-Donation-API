@@ -1,19 +1,44 @@
-const RecurringDonationScheduler = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationSchedulerModule = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationScheduler = RecurringDonationSchedulerModule.Class || RecurringDonationSchedulerModule;
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
   debug: jest.fn(),
 }));
 
-jest.mock('../src/utils/correlation', () => ({
+jest.mock('../../src/utils/correlation', () => ({
   withBackgroundContext: (_task, fn) => fn(),
   withAsyncContext: (_task, fn) => fn(),
   getCorrelationSummary: () => ({
     correlationId: 'corr-test',
     traceId: 'trace-test',
   }),
+}));
+
+jest.mock('../../src/utils/tracing', () => ({
+  withSpanInContext: (_name, _ctx, _attrs, fn) => fn(),
+  extractTraceContext: () => ({}),
+  injectTraceHeaders: (h) => h,
+  getCurrentTraceparent: () => null,
+}));
+
+jest.mock('../../src/utils/database', () => ({
+  query: jest.fn().mockResolvedValue([]),
+  run: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../src/services/WebhookService', () => ({
+  notifyWebhook: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../src/services/ApiKeyExpirationNotifier', () => ({
+  run: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../src/models/apiKeys', () => ({
+  revokeExpiredDeprecatedKeys: jest.fn().mockResolvedValue(0),
 }));
 
 describe('RecurringDonationScheduler - Time Based Behavior', () => {

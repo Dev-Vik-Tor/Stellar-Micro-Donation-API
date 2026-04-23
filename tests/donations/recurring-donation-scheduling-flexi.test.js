@@ -14,25 +14,41 @@ const request = require('supertest');
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
-jest.mock('../src/utils/log', () => ({
+jest.mock('../../src/utils/log', () => ({
   info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(),
 }));
 
-jest.mock('../src/utils/correlation', () => ({
+jest.mock('../../src/utils/correlation', () => ({
   withBackgroundContext: (_n, fn) => fn(),
   withAsyncContext: (_n, fn, _ctx) => fn(),
   getCorrelationSummary: () => ({ correlationId: 'test-corr', traceId: 'test-trace' }),
 }));
 
-jest.mock('../src/utils/database');
+jest.mock('../../src/utils/tracing', () => ({
+  withSpanInContext: (_name, _ctx, _attrs, fn) => fn(),
+  extractTraceContext: () => ({}),
+  injectTraceHeaders: (h) => h,
+  getCurrentTraceparent: () => null,
+}));
+
+jest.mock('../../src/utils/database');
 const Database = require('../../src/utils/database');
 
-jest.mock('../src/services/WebhookService', () => ({
+jest.mock('../../src/services/WebhookService', () => ({
   sendFailureNotification: jest.fn().mockResolvedValue({ delivered: true, statusCode: 200 }),
 }));
 
+jest.mock('../../src/services/ApiKeyExpirationNotifier', () => ({
+  run: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('../../src/models/apiKeys', () => ({
+  revokeExpiredDeprecatedKeys: jest.fn().mockResolvedValue(0),
+}));
+
 // Require these AFTER mocks are set up
-const RecurringDonationScheduler = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationSchedulerModule = require('../../src/services/RecurringDonationScheduler');
+const RecurringDonationScheduler = RecurringDonationSchedulerModule.Class || RecurringDonationSchedulerModule;
 const MockStellarService = require('../../src/services/MockStellarService');
 const WebhookService = require('../../src/services/WebhookService');
 const { DONATION_FREQUENCIES, SCHEDULE_STATUS } = require('../../src/constants');
@@ -649,12 +665,12 @@ describe('getExecutionLogs and getRecentFailures', () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 // Mock heavy middleware dependencies for route tests
-jest.mock('../src/middleware/rbac', () => ({
+jest.mock('../../src/middleware/rbac', () => ({
   checkPermission: () => (req, res, next) => next(),
   requireAdmin: () => (req, res, next) => next(),
   attachUserRole: () => (req, res, next) => { req.user = { role: 'admin' }; next(); },
 }));
-jest.mock('../src/config/serviceContainer', () => ({
+jest.mock('../../src/config/serviceContainer', () => ({
   getRecurringDonationScheduler: () => ({
     calculateNextExecutionDate: (date, freq, days) => {
       const next = new Date(date);
