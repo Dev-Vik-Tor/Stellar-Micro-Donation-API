@@ -1,3 +1,5 @@
+// @ts-check
+
 /**
  * Validation utilities for API requests
  * Cleaned up to remove unused functions and dependencies
@@ -6,6 +8,8 @@
 /**
  * Validate Stellar public key format
  * Stellar public keys start with 'G' and are 56 characters long (base32 encoded)
+ * @param {unknown} key - Value to validate as Stellar public key
+ * @returns {boolean} True if valid Stellar public key format
  */
 const isValidStellarPublicKey = (key) => {
   if (typeof key !== 'string') return false;
@@ -18,6 +22,8 @@ const isValidStellarPublicKey = (key) => {
 /**
  * Validate Stellar secret key format
  * Stellar secret keys start with 'S' and are 56 characters long (base32 encoded)
+ * @param {unknown} key - Value to validate as Stellar secret key
+ * @returns {boolean} True if valid Stellar secret key format
  */
 const isValidStellarSecretKey = (key) => {
   if (typeof key !== 'string') return false;
@@ -29,6 +35,8 @@ const isValidStellarSecretKey = (key) => {
 
 /**
  * Validate amount is a positive number
+ * @param {unknown} amount - Value to validate as positive amount
+ * @returns {boolean} True if valid positive number
  */
 const isValidAmount = (amount) => {
   const num = parseFloat(amount);
@@ -37,6 +45,8 @@ const isValidAmount = (amount) => {
 
 /**
  * Validate date string format
+ * @param {unknown} dateString - Value to validate as date string
+ * @returns {boolean} True if valid date format
  */
 const isValidDate = (dateString) => {
   const date = new Date(dateString);
@@ -45,6 +55,13 @@ const isValidDate = (dateString) => {
 
 /**
  * Validate date range
+ * @typedef {object} DateRangeResult
+ * @prop {boolean} valid - Whether the date range is valid
+ * @prop {string} [error] - Error message if invalid
+ *
+ * @param {unknown} startDate - Start date to validate
+ * @param {unknown} endDate - End date to validate
+ * @returns {DateRangeResult} Validation result with optional error message
  */
 const isValidDateRange = (startDate, endDate) => {
   const start = new Date(startDate);
@@ -64,6 +81,8 @@ const isValidDateRange = (startDate, endDate) => {
 /**
  * Validate transaction hash format
  * Stellar transaction hashes are 64 character hex strings
+ * @param {unknown} hash - Value to validate as transaction hash
+ * @returns {boolean} True if valid transaction hash format
  */
 const isValidTransactionHash = (hash) => {
   if (typeof hash !== 'string') return false;
@@ -73,6 +92,8 @@ const isValidTransactionHash = (hash) => {
 
 /**
  * Sanitize string input
+ * @param {unknown} str - Value to sanitize as string
+ * @returns {string} Trimmed string or empty string if not a string
  */
 const sanitizeString = (str) => {
   if (typeof str !== 'string') return '';
@@ -81,6 +102,8 @@ const sanitizeString = (str) => {
 
 /**
  * Check if a wallet/user exists by ID (async)
+ * @param {unknown} id - User ID to check
+ * @returns {Promise<boolean>} True if user exists
  */
 const walletExists = async (id) => {
   if (!id && id !== 0) return false;
@@ -91,6 +114,8 @@ const walletExists = async (id) => {
 
 /**
  * Check if a wallet address exists (async)
+ * @param {unknown} address - Wallet address to check
+ * @returns {Promise<boolean>} True if wallet address exists
  */
 const walletAddressExists = async (address) => {
   if (!address) return false;
@@ -101,6 +126,8 @@ const walletAddressExists = async (address) => {
 
 /**
  * Check if a transaction exists by ID
+ * @param {unknown} id - Transaction ID to check
+ * @returns {boolean} True if transaction exists
  */
 const transactionExists = (id) => {
   if (!id && id !== 0) return false;
