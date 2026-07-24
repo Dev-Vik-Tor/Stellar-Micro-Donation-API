@@ -40,6 +40,7 @@
     "test:load:jest": "jest tests/implement-load-testing-suite.test.js --testTimeout=60000 --forceExit",
     "test:smoke": "jest --config jest.config.smoke.js --forceExit",
     "test:quarantine": "jest --config jest.config.quarantine.js",
+    "test:backup-restore": "node scripts/test-backup-restore.js",
     "mutation:test": "node scripts/run-mutation-tests.js",
     "mutation:watch": "node scripts/run-mutation-tests.js --watch",
     "changelog": "node scripts/generate-changelog.js",
