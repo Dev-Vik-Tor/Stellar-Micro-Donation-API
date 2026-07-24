@@ -1,0 +1,194 @@
+name: Migration Tests
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    paths:
+      - 'src/migrations/**'
+      - 'src/utils/migrationRunner.js'
+      - 'scripts/test-migrations.js'
+      - 'scripts/check-migration-ids.js'
+      - '.github/workflows/migrations-ci.yml'
+  pull_request:
+    branches: [ "main", "master" ]
+    paths:
+      - 'src/migrations/**'
+      - 'src/utils/migrationRunner.js'
+      - 'scripts/test-migrations.js'
+      - 'scripts/check-migration-ids.js'
+      - '.github/workflows/migrations-ci.yml'
+
+jobs:
+  migration-validation:
+    runs-on: ubuntu-latest
+    name: Validate Migration Files
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check migration IDs
+        run: npm run migrate:check
+        env:
+          NODE_ENV: test
+
+  migration-fresh-database:
+    runs-on: ubuntu-latest
+    name: Test Migrations on Fresh Database
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migration test suite
+        run: npm run test:migrations
+        env:
+          NODE_ENV: test
+          ENCRYPTION_KEY: test_encryption_key_0000000000000000000000000000000000000000000000000000000000000000
+          API_KEYS: test_key_1,test_key_2
+
+      - name: Upload test database
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-migration-db
+          path: data/test-migrations.db
+          retention-days: 7
+          if-no-files-found: ignore
+
+  migration-order-detection:
+    runs-on: ubuntu-latest
+    name: Verify Migration Order
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Verify migration order
+        run: |
+          if [ ! -d "src/migrations" ]; then
+            echo "No migrations directory found (new project)"
+            exit 0
+          fi
+
+          # Extract migration prefixes and verify they're in order
+          echo "Checking migration order..."
+          ls src/migrations/*.js 2>/dev/null | sed 's|.*/\([0-9]*\).*|\1|' | sort -n | (
+            prev=0
+            while read curr; do
+              if [ -n "$curr" ]; then
+                if [ "$curr" -le "$prev" ]; then
+                  echo "✗ Migration order error: prefix $curr comes after $prev"
+                  exit 1
+                fi
+                prev=$curr
+              fi
+            done
+          )
+          echo "✓ Migration order is correct"
+
+  migration-duplicate-detection:
+    runs-on: ubuntu-latest
+    name: Detect Duplicate Migration Prefixes
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for duplicate migration prefixes
+        run: |
+          if [ ! -d "src/migrations" ]; then
+            echo "No migrations directory found (new project)"
+            exit 0
+          fi
+
+          echo "Checking for duplicate migration prefixes..."
+
+          duplicates=$(ls src/migrations/*.js 2>/dev/null | sed 's|.*/\([0-9]*\).*|\1|' | sort | uniq -d)
+
+          if [ -n "$duplicates" ]; then
+            echo "✗ Found duplicate migration prefixes:"
+            echo "$duplicates"
+
+            # Show which files have duplicates
+            for prefix in $duplicates; do
+              echo "  Prefix $prefix:"
+              ls src/migrations/${prefix}_*.js 2>/dev/null | while read f; do
+                echo "    - $f"
+              done
+            done
+            exit 1
+          else
+            echo "✓ No duplicate migration prefixes found"
+          fi
+
+  migration-documentation:
+    runs-on: ubuntu-latest
+    name: Verify Migration Documentation
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check migration documentation
+        run: |
+          test -f docs/MIGRATION_TESTING.md || exit 1
+          test -f src/utils/migrationRunner.js || exit 1
+          echo "✓ Migration documentation and utilities are present"
+
+      - name: Verify documentation completeness
+        run: |
+          if ! grep -q "Fresh Database" docs/MIGRATION_TESTING.md; then
+            echo "✗ Documentation missing fresh database testing section"
+            exit 1
+          fi
+          if ! grep -q "Rollback" docs/MIGRATION_TESTING.md; then
+            echo "✗ Documentation missing rollback information"
+            exit 1
+          fi
+          if ! grep -q "Best Practices" docs/MIGRATION_TESTING.md; then
+            echo "✗ Documentation missing best practices"
+            exit 1
+          fi
+          echo "✓ Documentation contains all required sections"
+
+  summary:
+    runs-on: ubuntu-latest
+    name: Migration Tests Summary
+    needs: [migration-validation, migration-fresh-database, migration-order-detection, migration-duplicate-detection, migration-documentation]
+    if: always()
+    steps:
+      - name: Check all tests passed
+        run: |
+          if [ "${{ needs.migration-validation.result }}" != "success" ]; then
+            echo "✗ Migration validation failed"
+            exit 1
+          fi
+          if [ "${{ needs.migration-fresh-database.result }}" != "success" ]; then
+            echo "✗ Fresh database migration tests failed"
+            exit 1
+          fi
+          if [ "${{ needs.migration-order-detection.result }}" != "success" ]; then
+            echo "✗ Migration order detection failed"
+            exit 1
+          fi
+          if [ "${{ needs.migration-duplicate-detection.result }}" != "success" ]; then
+            echo "✗ Duplicate detection failed"
+            exit 1
+          fi
+          if [ "${{ needs.migration-documentation.result }}" != "success" ]; then
+            echo "✗ Documentation verification failed"
+            exit 1
+          fi
+          echo "✓ All migration tests passed"
