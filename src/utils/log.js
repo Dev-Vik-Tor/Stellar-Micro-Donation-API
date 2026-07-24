@@ -237,22 +237,34 @@ function formatText(logEntry) {
 
 /**
  * Process and dispatch a log event globally
+ *
+ * SAMPLING POLICY:
+ * - ERROR and WARN logs are NEVER sampled (critical for troubleshooting)
+ * - Security and audit logs are NEVER sampled (compliance requirement)
+ * - Only DEBUG and INFO logs are subject to sampling
  */
-function dispatchLog(levelsKey, scope, message, meta) {
+function dispatchLog(levelsKey, scope, message, meta = {}) {
   const targetLevelValue = LEVELS[levelsKey];
   if (targetLevelValue < CURRENT_LEVEL && !(levelsKey === 'DEBUG' && isDebugMode)) {
     return; // Filter out below current level
   }
 
-  // Sampling for debug logs
-  if (levelsKey === 'DEBUG' && SAMPLE_RATE < 1.0) {
+  // Check if this is a critical log that must never be sampled
+  const isMustKeepLog = meta._mustKeep === true ||
+                        meta._isSecurityLog === true ||
+                        meta._isAuditLog === true ||
+                        levelsKey === 'ERROR' ||
+                        levelsKey === 'WARN';
+
+  // Apply sampling only to non-critical logs
+  if (!isMustKeepLog && levelsKey === 'DEBUG' && SAMPLE_RATE < 1.0) {
     if (Math.random() > SAMPLE_RATE) {
       return; // Drop based on sample rate
     }
   }
 
   const logEntry = buildLogEntry(levelsKey, scope, message, meta);
-  
+
   let formattedOutput;
   if (LOG_FORMAT.toLowerCase() === 'json') {
     formattedOutput = formatJson(logEntry);
@@ -304,6 +316,20 @@ function debug(scope, message, meta) {
 }
 
 /**
+ * Log a security event (always emitted, never sampled)
+ */
+function security(scope, message, meta) {
+  dispatchLog('WARN', scope, message, { ...meta, _isSecurityLog: true });
+}
+
+/**
+ * Log an audit event (always emitted, never sampled)
+ */
+function audit(scope, message, meta) {
+  dispatchLog('INFO', scope, message, { ...meta, _isAuditLog: true });
+}
+
+/**
  * Create a child logger with preset context
  */
 function child(context) {
@@ -312,6 +338,8 @@ function child(context) {
     warn: (scope, message, meta) => warn(scope, message, { ...context, ...meta }),
     error: (scope, message, meta) => error(scope, message, { ...context, ...meta }),
     debug: (scope, message, meta) => debug(scope, message, { ...context, ...meta }),
+    security: (scope, message, meta) => security(scope, message, { ...context, ...meta }),
+    audit: (scope, message, meta) => audit(scope, message, { ...context, ...meta }),
   };
 }
 
@@ -320,6 +348,8 @@ module.exports = {
   warn,
   error,
   debug,
+  security,
+  audit,
   child,
   setContext,
   getContext,
