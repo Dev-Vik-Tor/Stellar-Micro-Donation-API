@@ -1,0 +1,82 @@
+version: '3.9'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    # Use secrets from files instead of environment variables
+    # Secrets are mounted as read-only files in /run/secrets/
+    secrets:
+      - encryption_key
+      - api_keys
+      - db_encryption_key
+      - stellar_secret_key
+      - stellar_public_key
+      - jwt_secret
+    environment:
+      # Reference secrets via file paths
+      - ENCRYPTION_KEY_FILE=/run/secrets/encryption_key
+      - API_KEYS_FILE=/run/secrets/api_keys
+      - DB_ENCRYPTION_KEY_FILE=/run/secrets/db_encryption_key
+      - STELLAR_SECRET_KEY_FILE=/run/secrets/stellar_secret_key
+      - STELLAR_PUBLIC_KEY_FILE=/run/secrets/stellar_public_key
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - NODE_ENV=production
+      - DB_PATH=/app/data/donations.db
+      - LOG_LEVEL=info
+      - SECURE_SECRETS=true
+    volumes:
+      # Persist SQLite database across container restarts
+      - db_data:/app/data
+      # Mount logs directory for external log aggregation
+      - logs:/app/logs
+    restart: always
+    # Resource limits to prevent container resource exhaustion
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '1.0'
+          memory: 512M
+    # Health check configuration
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # Logging configuration
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '100m'
+        max-file: '10'
+        labels: 'service=stellar-api,env=production'
+
+volumes:
+  db_data:
+    driver: local
+  logs:
+    driver: local
+
+secrets:
+  # These secrets should be managed by Docker Swarm, Kubernetes, or populated from external secret stores
+  # For Swarm: docker secret create encryption_key -
+  # For K8s: kubectl create secret generic stellar-secrets --from-literal=encryption_key=<value>
+  encryption_key:
+    file: ./secrets/encryption_key.txt
+  api_keys:
+    file: ./secrets/api_keys.txt
+  db_encryption_key:
+    file: ./secrets/db_encryption_key.txt
+  stellar_secret_key:
+    file: ./secrets/stellar_secret_key.txt
+  stellar_public_key:
+    file: ./secrets/stellar_public_key.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
