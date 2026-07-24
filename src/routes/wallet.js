@@ -27,9 +27,25 @@ const router = express.Router();
 // Mount decomposed sub-routers
 const indexRouter = require('./wallets/index');
 const metadataRouter = require('./wallets/metadata');
+const balanceHistoryRouter = require('./wallets/balance-history');
+const homeDomainRouter = require('./wallets/home-domain');
+const inflationRouter = require('./wallets/inflation');
+const sponsorshipRouter = require('./wallets/sponsorship');
+const trustlinesRouter = require('./wallets/trustlines');
+const dataEntriesRouter = require('./wallets/data-entries');
+const mergeRouter = require('./wallets/merge');
+const limitsConfigRouter = require('./wallets/limits-config');
 
 // Mount all routes (sub-routers handle their own paths)
 router.use('/', indexRouter);
-router.use('/:id', metadataRouter);
+router.use('/', metadataRouter);
+router.use('/', balanceHistoryRouter);
+router.use('/', homeDomainRouter);
+router.use('/', inflationRouter);
+router.use('/', sponsorshipRouter);
+router.use('/', trustlinesRouter);
+router.use('/', dataEntriesRouter);
+router.use('/', mergeRouter);
+router.use('/', limitsConfigRouter);
 
 module.exports = router;
