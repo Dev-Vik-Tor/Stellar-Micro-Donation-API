@@ -21,10 +21,10 @@ const SECRET_PATTERNS = [
   /api[_-]key\s*[:=]\s*[^\s,}]+/gi,  // API key assignments
 ];
 
-// List of real secret values that might be in env (simulated)
+// List of test secret values for verification (simulated, not real)
 const TEST_SECRETS = {
   stellarSecret: 'SBZWZ7T3FQNFGSQJ7M5IXEDQ5ZPFYAIYXRRHXFLDKFPQCFP7Y4KXBWVI',
-  apiKey: 'sk_live_1234567890abcdefghijklmnop',
+  apiKey: 'test_api_key_1234567890abcdefghijklmnop',
   password: 'SuperSecurePassword123!@#',
   databaseUrl: 'postgresql://user:password@localhost:5432/db',
 };

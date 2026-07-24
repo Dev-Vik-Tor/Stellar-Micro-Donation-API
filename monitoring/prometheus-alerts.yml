@@ -1,0 +1,384 @@
+# Prometheus Alert Rules for Stellar Micro Donation API
+#
+# Issue #1225: Define SLOs and alerting rules for key endpoints and jobs
+#
+# These alert rules monitor critical surfaces and fire when SLOs are breached.
+# Each alert is mapped to a runbook for incident response procedures.
+#
+# To use:
+# 1. Copy this file to your Prometheus config directory
+# 2. Reference in prometheus.yml:
+#    rule_files:
+#      - 'prometheus-alerts.yml'
+# 3. Restart Prometheus
+# 4. Configure alertmanager to handle alerts
+
+groups:
+  - name: stellar_donation_api_slos
+    interval: 30s
+    rules:
+      # ─── API Availability SLO ────────────────────────────────────────────────
+
+      - alert: APIAvailabilityBelowSLO
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"2.."}[5m])) +
+            sum(rate(http_requests_total{status=~"3.."}[5m]))
+          ) /
+          sum(rate(http_requests_total[5m])) < 0.99
+        for: 5m
+        labels:
+          severity: critical
+          slo: availability
+          service: stellar-donation-api
+        annotations:
+          summary: "API availability below 99% SLO"
+          description: |
+            HTTP request success rate is {{ $value | humanizePercentage }} over the last 5 minutes.
+            SLO requires >= 99% availability.
+
+            Affected endpoints: Check /metrics endpoint for per-route breakdown.
+
+            Action items:
+            1. Check API logs for error patterns: grep ERROR /var/log/api.log
+            2. Review recent deployments: git log --oneline -10
+            3. Check database connection pool: curl /health/ready
+            4. See runbook: docs/RUNBOOKS.md#api-availability
+
+      - alert: APIErrorRateAboveSLO
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) /
+          sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          slo: error_rate
+          service: stellar-donation-api
+        annotations:
+          summary: "API error rate above SLO threshold"
+          description: |
+            HTTP 5xx error rate is {{ $value | humanizePercentage }} over the last 5 minutes.
+            SLO requires < 0.5% error rate.
+
+            Immediate actions:
+            1. Check application logs for stack traces
+            2. Review database query performance
+            3. Check external service connectivity (Horizon, Redis)
+
+            Runbook: docs/RUNBOOKS.md#api-error-rate
+
+      # ─── API Latency SLO ──────────────────────────────────────────────────────
+
+      - alert: APIP95LatencyAboveSLO
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+          slo: latency
+          percentile: p95
+          service: stellar-donation-api
+        annotations:
+          summary: "API P95 latency above SLO ({{ $value | humanizeDuration }})"
+          description: |
+            95th percentile request latency is {{ $value | humanizeDuration }}.
+            SLO requires P95 <= 200ms.
+
+            Diagnostics:
+            1. Check slow endpoint: top slow routes in /metrics
+            2. Review database query performance: EXPLAIN in SQL logs
+            3. Check memory usage: curl /health/live | jq .memory
+            4. Review recent code changes
+
+            Runbook: docs/RUNBOOKS.md#api-latency
+
+      - alert: APIP99LatencyAboveSLO
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          slo: latency
+          percentile: p99
+          service: stellar-donation-api
+        annotations:
+          summary: "API P99 latency degraded ({{ $value | humanizeDuration }})"
+          description: |
+            99th percentile request latency is {{ $value | humanizeDuration }}.
+            SLO target P99 <= 1s (warning at 2s).
+
+            Likely causes:
+            1. High query load on database
+            2. Slow external API (Horizon) responses
+            3. Garbage collection pauses
+            4. Disk I/O bottleneck
+
+            Runbook: docs/RUNBOOKS.md#api-latency
+
+      # ─── Scheduler Lag SLO ────────────────────────────────────────────────────
+
+      - alert: SchedulerLagWarning
+        expr: |
+          stellar_scheduler_lag_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+          slo: scheduler_lag
+          service: stellar-donation-api
+        annotations:
+          summary: "Scheduler lag warning: {{ $value | humanizeDuration }}"
+          description: |
+            Recurring donation scheduler is {{ $value | humanizeDuration }} behind schedule.
+            Normal lag should be < 1 minute.
+
+            This means pending donations are not being processed on time.
+
+            Diagnostics:
+            1. Check scheduler logs: grep "RecurringDonationScheduler" /var/log/api.log
+            2. Check database pool: is database responding?
+            3. Check Stellar network: is it slow/overloaded?
+            4. Check recent deployments
+
+            Runbook: docs/RUNBOOKS.md#scheduler-lag
+
+      - alert: SchedulerLagCritical
+        expr: |
+          stellar_scheduler_lag_seconds > 300
+        for: 2m
+        labels:
+          severity: critical
+          slo: scheduler_lag
+          service: stellar-donation-api
+        annotations:
+          summary: "CRITICAL: Scheduler severely lagged {{ $value | humanizeDuration }}"
+          description: |
+            Recurring donation scheduler is {{ $value | humanizeDuration }} behind (SLO: < 1 min).
+
+            This is impacting user experience. Pending donations are stuck.
+
+            IMMEDIATE ACTIONS:
+            1. Page on-call engineer NOW
+            2. Check if scheduler is still running: ps aux | grep -i scheduler
+            3. Check database connectivity: /health/ready
+            4. Review last 100 log entries: tail -100 /var/log/api.log
+            5. If hung: restart the scheduler process
+
+            Runbook: docs/RUNBOOKS.md#scheduler-lag-critical
+
+      # ─── Recurring Donation Execution SLO ────────────────────────────────────
+
+      - alert: RecurringDonationSuccessRateLow
+        expr: |
+          sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) /
+          (
+            sum(rate(stellar_recurring_donations_executed_total{status="success"}[1h])) +
+            sum(rate(stellar_recurring_donations_executed_total{status="failure"}[1h]))
+          ) < 0.98
+        for: 10m
+        labels:
+          severity: critical
+          slo: background_job
+          job_type: recurring_donations
+          service: stellar-donation-api
+        annotations:
+          summary: "Recurring donation success rate below SLO: {{ $value | humanizePercentage }}"
+          description: |
+            Recurring donation execution success rate is {{ $value | humanizePercentage }}.
+            SLO requires >= 99% success rate.
+
+            Failed donations are being retried but may ultimately fail.
+
+            Diagnostics:
+            1. Check Stellar network status
+            2. Review error logs: grep "RECURRING_DONATION.*ERROR" /var/log/api.log
+            3. Check account balance: curl /api/v1/account
+            4. Verify Horizon API connectivity
+
+            Runbook: docs/RUNBOOKS.md#recurring-donation-failure
+
+      # ─── Database Connection Pool SLO ─────────────────────────────────────────
+
+      - alert: DatabaseConnectionPoolHigh
+        expr: |
+          (
+            sqlite_pool_connections_in_use / sqlite_pool_size
+          ) * 100 > 70
+        for: 2m
+        labels:
+          severity: warning
+          slo: database
+          service: stellar-donation-api
+        annotations:
+          summary: "Database connection pool utilization {{ $value | humanize }}%"
+          description: |
+            Database connection pool is {{ $value | humanize }}% utilized.
+            Normal range is < 50%. High utilization (70%+) indicates:
+
+            1. Slow queries holding connections too long
+            2. Connection leaks (not returned to pool)
+            3. Sudden traffic spike
+
+            Actions:
+            1. Check long-running queries
+            2. Review request concurrency
+            3. Consider scaling pool size if sustained
+
+            Runbook: docs/RUNBOOKS.md#db-pool
+
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          (
+            sqlite_pool_connections_in_use / sqlite_pool_size
+          ) * 100 > 90
+        for: 1m
+        labels:
+          severity: critical
+          slo: database
+          service: stellar-donation-api
+        annotations:
+          summary: "CRITICAL: Database pool nearly exhausted {{ $value | humanize }}%"
+          description: |
+            Database connections are {{ $value | humanize }}% utilized.
+            New requests will timeout trying to acquire a connection.
+
+            IMMEDIATE ACTIONS:
+            1. Identify and kill long-running queries
+            2. Check for connection leaks in application logs
+            3. Scale up connection pool if needed
+            4. Restart application if unresponsive
+
+            Runbook: docs/RUNBOOKS.md#db-pool-critical
+
+      # ─── Horizon API Connectivity SLO ─────────────────────────────────────────
+
+      - alert: HorizonAPIErrorRateHigh
+        expr: |
+          (
+            sum(rate(horizon_requests_total{status=~"5.."}[5m])) /
+            sum(rate(horizon_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          slo: external_api
+          external_service: horizon
+          service: stellar-donation-api
+        annotations:
+          summary: "Horizon API error rate elevated: {{ $value | humanizePercentage }}"
+          description: |
+            Horizon API is returning {{ $value | humanizePercentage }} errors.
+
+            This may indicate:
+            1. Stellar network issues or maintenance
+            2. Network connectivity problems
+            3. Rate limiting from Stellar
+
+            Actions:
+            1. Check Stellar status page: https://stellar.org/status
+            2. Verify network connectivity: curl https://horizon.stellar.org
+            3. Check rate limit headers in logs
+
+            Runbook: docs/RUNBOOKS.md#horizon-connectivity
+
+      # ─── Transaction Sync Scheduler SLO ───────────────────────────────────────
+
+      - alert: TransactionSyncLagHigh
+        expr: |
+          stellar_transaction_sync_lag_seconds > 180
+        for: 5m
+        labels:
+          severity: warning
+          slo: scheduler_lag
+          scheduler: transaction_sync
+          service: stellar-donation-api
+        annotations:
+          summary: "Transaction sync lag: {{ $value | humanizeDuration }}"
+          description: |
+            Transaction sync scheduler is {{ $value | humanizeDuration }} behind.
+
+            Pending transaction reconciliation is delayed.
+
+            Diagnostics:
+            1. Check Horizon API responsiveness
+            2. Review database query performance
+            3. Check scheduler logs
+
+            Runbook: docs/RUNBOOKS.md#transaction-sync-lag
+
+      # ─── Application Startup & Health ────────────────────────────────────────
+
+      - alert: HealthcheckFailing
+        expr: |
+          up{job="stellar-donation-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+          service: stellar-donation-api
+        annotations:
+          summary: "Application health check failing"
+          description: |
+            Prometheus cannot reach /health/ready endpoint.
+
+            Application may have crashed or port is blocked.
+
+            IMMEDIATE ACTIONS:
+            1. Check if process is running: ps aux | grep node
+            2. Check port 3000: netstat -tulpn | grep 3000
+            3. Check logs for startup errors
+            4. Restart application if crashed
+
+            Runbook: docs/RUNBOOKS.md#application-down
+
+      # ─── General Node.js Health ──────────────────────────────────────────────
+
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            process_resident_memory_bytes /
+            (nodejs_heap_size_limit_bytes + 100000000)
+          ) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: nodejs
+          service: stellar-donation-api
+        annotations:
+          summary: "High memory usage: {{ $value | humanizePercentage }}"
+          description: |
+            Application is using {{ $value | humanizePercentage }} of available memory.
+
+            May indicate:
+            1. Memory leak in recent code
+            2. Large data structures in memory
+            3. Cache growing unbounded
+
+            Actions:
+            1. Review heap dump
+            2. Check for recent deployments
+            3. Restart application if needed
+
+            Runbook: docs/RUNBOOKS.md#high-memory
+
+      - alert: HighEventLoopLag
+        expr: |
+          nodejs_eventloop_lag_seconds > 1
+        for: 2m
+        labels:
+          severity: warning
+          component: nodejs
+          service: stellar-donation-api
+        annotations:
+          summary: "High event loop lag: {{ $value | humanizeDuration }}"
+          description: |
+            Node.js event loop is lagging {{ $value | humanizeDuration }}.
+
+            Indicates application is CPU-bound (long-running synchronous operations).
+
+            This will impact request latency.
+
+            Runbook: docs/RUNBOOKS.md#event-loop-lag
