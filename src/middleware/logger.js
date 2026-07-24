@@ -73,6 +73,7 @@ class Logger {
    * 2. Outputs high-level summary including Method, Endpoint, Status, and requestId.
    * 3. If LOG_VERBOSE is active, outputs full sanitized request/response bodies.
    * 4. If Debug Mode is active, logs granular metadata (headers, query, IP).
+   * 5. Includes latency for performance tracking.
    */
   logToConsole(logData) {
     const { method, endpoint, statusCode, duration, requestId, timestamp } = logData;
@@ -85,23 +86,25 @@ class Logger {
     }
     const resetColor = '\x1b[0m';
 
-    // Log high-level summary
-    log.info('REQUEST_LOGGER', `${method} ${endpoint} ${statusColor}${statusCode}${resetColor} - ${duration}ms`, {
+    // Log high-level summary with latency (structured field)
+    log.info('REQUEST_LOGGER', `${method} ${endpoint} ${statusColor}${statusCode}${resetColor}`, {
       requestId,
+      route: endpoint,
       statusCode,
-      duration,
+      latency: duration,
       method,
-      endpoint,
       timestamp
     });
 
     if (process.env.LOG_VERBOSE === 'true') {
       log.info('REQUEST_LOGGER', 'Request payload', {
         requestId,
+        route: endpoint,
         ...logData.request
       });
       log.info('REQUEST_LOGGER', 'Response payload', {
         requestId,
+        route: endpoint,
         ...logData.response
       });
     }
@@ -109,6 +112,7 @@ class Logger {
     if (log.isDebugMode) {
       log.debug('REQUEST_LOGGER', 'Request details', {
         requestId,
+        route: endpoint,
         headers: this.sanitize(logData.request?.headers),
         query: logData.request?.query,
         params: logData.request?.params,
@@ -116,8 +120,9 @@ class Logger {
       });
       log.debug('REQUEST_LOGGER', 'Response details', {
         requestId,
+        route: endpoint,
         statusCode,
-        duration: `${duration}ms`
+        latency: duration
       });
     }
   }
