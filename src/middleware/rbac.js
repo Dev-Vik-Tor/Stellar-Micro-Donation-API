@@ -41,7 +41,7 @@ const legacyKeys = config.apiKeys.legacy;
  * 4. If API key has scopes, additionally check that the required permission is in the scopes.
  * 5. Pass control to next middleware if authorized; otherwise, propagate a ForbiddenError.
  */
-exports.checkPermission = (permission) => {
+const checkPermission = (permission) => {
   return async (req, res, next) => {
     try {
       if (!req.user) {
@@ -129,7 +129,7 @@ exports.checkPermission = (permission) => {
  * 3. If API key has scopes, also checks that at least one scope permission matches.
  * 4. If no matches are found, generates a descriptive error listing all acceptable permissions.
  */
-exports.checkAnyPermission = (permissions) => {
+const checkAnyPermission = (permissions) => {
   return (req, res, next) => {
     try {
       if (!req.user) {
@@ -174,7 +174,7 @@ exports.checkAnyPermission = (permissions) => {
  * 3. If API key has scopes, also checks that all scope permissions are present.
  * 4. Strict failure if even one permission is missing from the user's role or scopes.
  */
-exports.checkAllPermissions = (permissions) => {
+const checkAllPermissions = (permissions) => {
   return (req, res, next) => {
     try {
       if (!req.user) {
@@ -216,7 +216,7 @@ exports.checkAllPermissions = (permissions) => {
  * X-TOTP-Code request header (or the request body field `totpCode`).
  * Flow: Checks req.user.role strictly. Prevents 'guest' or 'user' roles from accessing management endpoints.
  */
-exports.requireAdmin = () => {
+const requireAdmin = () => {
   return async (req, res, next) => {
     try {
       if (!req.user || req.user.role === 'guest') {
@@ -331,7 +331,7 @@ exports.requireAdmin = () => {
  * 5. Legacy Fallback: Checks against process.env.API_KEYS if DB lookup fails.
  * 6. Context Injection: Populates req.user with a standardized identity object for downstream use.
  */
-exports.attachUserRole = () => {
+const attachUserRole = () => {
   return (req, res, next) => {
     try {
       // Priority 1: Bearer JWT from Authorization header
@@ -499,7 +499,7 @@ exports.attachUserRole = () => {
  * @param {string} minTier - Minimum required tier: 'free' | 'basic' | 'pro' | 'enterprise'
  * @returns {Function} Express middleware
  */
-exports.requireTier = (minTier) => {
+const requireTier = (minTier) => {
   return (req, res, next) => {
     try {
       if (!req.user) {
@@ -531,4 +531,13 @@ exports.requireTier = (minTier) => {
       next(error);
     }
   };
+};
+
+module.exports = {
+  checkPermission,
+  checkAnyPermission,
+  checkAllPermissions,
+  requireAdmin,
+  attachUserRole,
+  requireTier,
 };
