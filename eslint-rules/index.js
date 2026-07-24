@@ -5,5 +5,6 @@ module.exports = {
     'require-async-handler': require('./require-async-handler'),
     'no-bare-timers': require('./no-bare-timers'),
     'no-floating-promises': require('./no-floating-promises'),
+    'consistent-exports': require('./consistent-exports'),
   },
 };
