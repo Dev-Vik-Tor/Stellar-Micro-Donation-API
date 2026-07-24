@@ -68,10 +68,12 @@ function withTimeout(promise, timeoutMs, operation = 'operation', abortControlle
       }, timeoutMs);
 
       // Clean up timer without creating an unhandled rejection branch.
-      promise.then(
-        () => clearTimeout(timer),
-        () => clearTimeout(timer)
-      );
+      promise
+        .then(
+          () => clearTimeout(timer),
+          () => clearTimeout(timer)
+        )
+        .catch(() => {});
     })
   ]);
 }

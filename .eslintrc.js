@@ -6,7 +6,7 @@ const hasSecurityPlugin = (() => {
     return false;
   }
 })();
-//minor comment not neccessary
+
 module.exports = {
   env: {
     node: true,
@@ -73,6 +73,7 @@ module.exports = {
     'no-new-func': 'error',
     'no-console': 'off',
     'local/require-async-handler': 'error',
+    'local/no-floating-promises': 'error',
   },
   overrides: [
     {
@@ -95,10 +96,6 @@ module.exports = {
       },
     },
     {
-      // Background schedulers, jobs, and workers must use timerRegistry so every
-      // handle is tracked and cleared during graceful shutdown. Inline
-      // eslint-disable-next-line comments are allowed for one-shot delays (sleep,
-      // stopGracefully wait loops) that are guaranteed to resolve quickly.
       files: [
         'src/services/**/*.js',
         'src/jobs/**/*.js',

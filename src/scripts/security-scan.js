@@ -78,18 +78,23 @@ module.exports = {
 
 // If run directly
 if (require.main === module) {
-  runAllScans().then(({ allPassed, results }) => {
-    console.log('--- Security Scan Results ---');
-    console.log('npm audit:', results.npmAudit.success ? 'PASS' : 'FAIL');
-    console.log('SAST:', results.sast.success ? 'PASS' : 'FAIL');
-    console.log('Secrets:', results.secrets.success ? 'PASS' : 'FAIL');
-    
-    if (!allPassed) {
-      console.error('Security scan failed!');
+  runAllScans()
+    .then(({ allPassed, results }) => {
+      console.log('--- Security Scan Results ---');
+      console.log('npm audit:', results.npmAudit.success ? 'PASS' : 'FAIL');
+      console.log('SAST:', results.sast.success ? 'PASS' : 'FAIL');
+      console.log('Secrets:', results.secrets.success ? 'PASS' : 'FAIL');
+
+      if (!allPassed) {
+        console.error('Security scan failed!');
+        process.exit(1);
+      } else {
+        console.log('All security scans passed!');
+        process.exit(0);
+      }
+    })
+    .catch((err) => {
+      console.error('Security scan error:', err.message || err);
       process.exit(1);
-    } else {
-      console.log('All security scans passed!');
-      process.exit(0);
-    }
-  });
+    });
 }
