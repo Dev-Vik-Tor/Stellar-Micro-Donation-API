@@ -6,7 +6,20 @@ const hasSecurityPlugin = (() => {
     return false;
   }
 })();
-//minor comment not neccessary
+
+/**
+ * Grandfathered large files
+ * These files exceed the max-lines limit but are in the process of being decomposed.
+ * As decomposition issues land (#1211, #1212, etc), these entries should be removed.
+ * All NEW files must stay within the budget.
+ */
+const GRANDFATHERED_LARGE_FILES = [
+  'src/services/DonationService.js',
+  'src/services/RecurringDonationScheduler.js',
+  'src/routes/admin/featureFlags.js',
+  'src/routes/admin/geoBlocking.js',
+];
+
 module.exports = {
   env: {
     node: true,
@@ -27,6 +40,15 @@ module.exports = {
       caughtErrors: 'none',
       ignoreRestSiblings: true,
       varsIgnorePattern: '^_',
+    }],
+
+    // File length budget: encourage files under 1000 lines (warn) to prevent
+    // unbounded growth without blocking all work. Grandfathered large files
+    // are exempt while they're being decomposed. New files must stay under budget.
+    'max-lines': ['warn', {
+      max: 1000,
+      skipBlankLines: true,
+      skipComments: true,
     }],
 
     // Security rules. no-secrets flags high-entropy strings; the patterns below are
@@ -75,6 +97,16 @@ module.exports = {
     'local/require-async-handler': 'error',
   },
   overrides: [
+    {
+      // Grandfathered large files: exempt from max-lines while being decomposed.
+      // As decomposition PRs land, remove entries from this list one by one.
+      // Issue tracking: #1211 (split MockStellarService), #1212 (decompose DonationService),
+      // #1213 (decompose wallet route), #1214 (decompose donation route)
+      files: GRANDFATHERED_LARGE_FILES,
+      rules: {
+        'max-lines': 'off',
+      },
+    },
     {
       // Enforce structured logging in all service source files. Operational/CLI
       // scripts (migrations, the env-validation boot check) print to the console
