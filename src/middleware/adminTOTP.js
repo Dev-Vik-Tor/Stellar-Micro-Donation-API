@@ -39,9 +39,11 @@ async function getDb() {
   return require('../utils/database');
 }
 
-/** Purge expired rows to prevent unbounded growth. Fire-and-forget. */
+/** Purge expired rows to prevent unbounded growth (background cleanup). */
 function purgeExpired(db) {
-  db.run('DELETE FROM totp_used_codes WHERE expires_at <= ?', [Date.now()]).catch(() => {});
+  // Intentional background cleanup—fire-and-forget. Failures silently discarded.
+  const _cleanup = db.run('DELETE FROM totp_used_codes WHERE expires_at <= ?', [Date.now()])
+    .catch(() => {});
 }
 
 /**

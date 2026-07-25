@@ -177,7 +177,7 @@ function createSequenceManager(config = {}) {
     });
 
     // Release the gate (and clean up the map) once fn settles
-    result.then(resolveGate, resolveGate);
+    result.then(resolveGate, resolveGate).catch(() => {});
     gate.finally(() => {
       if (lockMap.get(accountId) === gate) {
         lockMap.delete(accountId);

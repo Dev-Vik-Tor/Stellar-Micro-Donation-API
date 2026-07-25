@@ -16,22 +16,22 @@ const AuditLogService = require('../services/AuditLogService');
 
 /**
  * Middleware to check if a feature flag is enabled
- * 
+ *
  * Evaluates the flag with the following scope priority:
  * 1. API key-specific flag (if API key present)
  * 2. Environment-specific flag
  * 3. Global flag
- * 
+ *
  * If flag is disabled, returns 403 Forbidden.
  * If flag is not found, uses defaultValue (default: false).
- * 
+ *
  * @param {string} flagName - Name of the feature flag to check
  * @param {Object} options - Configuration options
  * @param {boolean} options.defaultValue - Default value if flag not found (default: false)
  * @param {string} options.environment - Environment name for scope evaluation
  * @returns {Function} - Express middleware function
  */
-exports.checkFeatureFlag = (flagName, options = {}) => {
+const checkFeatureFlag = (flagName, options = {}) => {
   const { defaultValue = false, environment = process.env.NODE_ENV || 'development' } = options;
 
   return async (req, res, next) => {
@@ -110,15 +110,15 @@ exports.checkFeatureFlag = (flagName, options = {}) => {
 
 /**
  * Middleware to attach all feature flags to request
- * 
+ *
  * Evaluates all flags and attaches them to req.flags for conditional logic.
  * Does not block requests - flags are available for downstream use.
- * 
+ *
  * @param {Object} options - Configuration options
  * @param {string} options.environment - Environment name for scope evaluation
  * @returns {Function} - Express middleware function
  */
-exports.attachFeatureFlags = (options = {}) => {
+const attachFeatureFlags = (options = {}) => {
   const { environment = process.env.NODE_ENV || 'development' } = options;
 
   return async (req, res, next) => {
@@ -158,17 +158,17 @@ exports.attachFeatureFlags = (options = {}) => {
 
 /**
  * Conditional middleware - only applies if flag is enabled
- * 
+ *
  * Useful for applying middleware conditionally based on feature flags.
  * If flag is disabled, middleware is skipped.
- * 
+ *
  * @param {string} flagName - Name of the feature flag
  * @param {Function} middleware - Middleware to apply conditionally
  * @param {Object} options - Configuration options
  * @param {string} options.environment - Environment name for scope evaluation
  * @returns {Function} - Express middleware function
  */
-exports.conditionalMiddleware = (flagName, middleware, options = {}) => {
+const conditionalMiddleware = (flagName, middleware, options = {}) => {
   const { environment = process.env.NODE_ENV || 'development' } = options;
 
   return async (req, res, next) => {
@@ -200,9 +200,9 @@ exports.conditionalMiddleware = (flagName, middleware, options = {}) => {
 
 /**
  * Conditional route handler - only executes if flag is enabled
- * 
+ *
  * Useful for conditional logic within route handlers.
- * 
+ *
  * @param {string} flagName - Name of the feature flag
  * @param {Function} handler - Handler to execute if flag is enabled
  * @param {Function} fallbackHandler - Optional fallback handler if flag is disabled
@@ -210,7 +210,7 @@ exports.conditionalMiddleware = (flagName, middleware, options = {}) => {
  * @param {string} options.environment - Environment name for scope evaluation
  * @returns {Function} - Express route handler
  */
-exports.conditionalHandler = (flagName, handler, fallbackHandler = null, options = {}) => {
+const conditionalHandler = (flagName, handler, fallbackHandler = null, options = {}) => {
   const { environment = process.env.NODE_ENV || 'development' } = options;
 
   return async (req, res, next) => {
@@ -239,4 +239,11 @@ exports.conditionalHandler = (flagName, handler, fallbackHandler = null, options
       next(error);
     }
   };
+};
+
+module.exports = {
+  checkFeatureFlag,
+  attachFeatureFlags,
+  conditionalMiddleware,
+  conditionalHandler,
 };

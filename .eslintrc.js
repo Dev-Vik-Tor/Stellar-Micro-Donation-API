@@ -7,19 +7,6 @@ const hasSecurityPlugin = (() => {
   }
 })();
 
-/**
- * Grandfathered large files
- * These files exceed the max-lines limit but are in the process of being decomposed.
- * As decomposition issues land (#1211, #1212, etc), these entries should be removed.
- * All NEW files must stay within the budget.
- */
-const GRANDFATHERED_LARGE_FILES = [
-  'src/services/DonationService.js',
-  'src/services/RecurringDonationScheduler.js',
-  'src/routes/admin/featureFlags.js',
-  'src/routes/admin/geoBlocking.js',
-];
-
 module.exports = {
   env: {
     node: true,
@@ -95,6 +82,7 @@ module.exports = {
     'no-new-func': 'error',
     'no-console': 'off',
     'local/require-async-handler': 'error',
+    'local/no-floating-promises': 'error',
   },
   overrides: [
     {
@@ -127,10 +115,6 @@ module.exports = {
       },
     },
     {
-      // Background schedulers, jobs, and workers must use timerRegistry so every
-      // handle is tracked and cleared during graceful shutdown. Inline
-      // eslint-disable-next-line comments are allowed for one-shot delays (sleep,
-      // stopGracefully wait loops) that are guaranteed to resolve quickly.
       files: [
         'src/services/**/*.js',
         'src/jobs/**/*.js',

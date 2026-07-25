@@ -1,3 +1,5 @@
+// @ts-check
+
 /**
  * Money Utility - Integer Stroop Arithmetic
  *
@@ -9,15 +11,26 @@
  * a fee is never rounded up against the donor.
  */
 
+/**
+ * @typedef {object} FeeOptions
+ * @prop {bigint} [minFeeStroops] - minimum fee clamp (default 0n)
+ * @prop {bigint} [maxFeeStroops] - maximum fee clamp (default unbounded)
+ * @prop {(bigint|number)} [surgeMultiplierBps] - surge multiplier in bps (e.g. 15000 = 1.5×)
+ */
+
+/** @type {bigint} */
 const STROOPS_PER_XLM = 10_000_000n;
+
+/** @type {bigint} */
 const BPS_DIVISOR = 10_000n;
 
 /**
  * Convert an XLM string or number to BigInt stroops.
  * Accepts: "1.234567", 1.234567, "5", 5
  * Throws for non-finite or negative input.
- * @param {string|number} xlm
- * @returns {bigint}
+ * @param {(string|number)} xlm - XLM amount as string or number
+ * @returns {bigint} BigInt stroops
+ * @throws {Error} if amount is invalid or negative
  */
 function toStroops(xlm) {
   // Normalise to string for exact decimal handling
@@ -37,8 +50,9 @@ function toStroops(xlm) {
 
 /**
  * Convert BigInt stroops to a 7-decimal XLM display string.
- * @param {bigint} stroops
- * @returns {string}  e.g. "1.2345670"
+ * @param {bigint} stroops - BigInt stroops amount
+ * @returns {string} XLM amount as string (e.g. "1.2345670")
+ * @throws {Error} if stroops is not a BigInt
  */
 function fromStroops(stroops) {
   if (typeof stroops !== 'bigint') {
@@ -55,13 +69,11 @@ function fromStroops(stroops) {
  * Calculate a fee in stroops using basis points (integer math, floors in platform's favor).
  * feeStroops = floor(amountStroops * bps / 10000)
  *
- * @param {bigint} amountStroops
- * @param {bigint|number} bps  - fee rate in basis points (e.g. 200 = 2%)
- * @param {object} [opts]
- * @param {bigint} [opts.minFeeStroops]  - minimum fee clamp (default 0n)
- * @param {bigint} [opts.maxFeeStroops]  - maximum fee clamp (default unbounded)
- * @param {bigint|number} [opts.surgeMultiplierBps]  - surge multiplier in bps (e.g. 15000 = 1.5×)
- * @returns {bigint}
+ * @param {bigint} amountStroops - amount in stroops
+ * @param {(bigint|number)} bps - fee rate in basis points (e.g. 200 = 2%)
+ * @param {FeeOptions} [opts] - optional fee calculation settings
+ * @returns {bigint} calculated fee in stroops
+ * @throws {Error} if amountStroops is not a BigInt or bps is negative
  */
 function calcFee(amountStroops, bps, opts = {}) {
   if (typeof amountStroops !== 'bigint') {
@@ -95,12 +107,22 @@ function calcFee(amountStroops, bps, opts = {}) {
   return fee;
 }
 
-/** Add two BigInt stroop values. */
+/**
+ * Add two BigInt stroop values.
+ * @param {(bigint|number|string)} a - first stroop amount
+ * @param {(bigint|number|string)} b - second stroop amount
+ * @returns {bigint} sum of stroops
+ */
 function addStroops(a, b) {
   return BigInt(a) + BigInt(b);
 }
 
-/** Subtract two BigInt stroop values. */
+/**
+ * Subtract two BigInt stroop values.
+ * @param {(bigint|number|string)} a - stroop amount to subtract from
+ * @param {(bigint|number|string)} b - stroop amount to subtract
+ * @returns {bigint} difference in stroops
+ */
 function subtractStroops(a, b) {
   return BigInt(a) - BigInt(b);
 }
