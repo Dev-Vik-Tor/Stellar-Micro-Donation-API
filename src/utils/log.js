@@ -175,6 +175,11 @@ function runWithContext(context, callback) {
 
 /**
  * Build structured log entry with standard and custom fields
+ *
+ * Standard fields are always included in consistent order:
+ * timestamp, level, service, environment, version, scope, message,
+ * followed by correlation/tracing fields (correlationId, traceId, operationId, requestId),
+ * then route and latency (if present), and finally custom metadata.
  */
 function buildLogEntry(level, scope, message, meta = {}) {
   const timestamp = new Date().toISOString();
@@ -185,16 +190,44 @@ function buildLogEntry(level, scope, message, meta = {}) {
   // eslint-disable-next-line no-control-regex
   const sanitizedMessage = typeof message === 'string' ? message.replace(/[\x00-\x1F\x7F]/g, '') : message;
 
-  return {
+  // Merge metadata with context, with metadata taking precedence
+  const mergedMeta = maskSensitiveData(meta);
+
+  // Build entry with consistent field ordering for structured logging
+  const entry = {
     timestamp,
     level,
     service: STANDARD_FIELDS.SERVICE_NAME,
     environment: STANDARD_FIELDS.ENVIRONMENT,
     version: STANDARD_FIELDS.VERSION,
     scope: sanitizedScope,
-    message: sanitizedMessage,
-    ...context,
-    ...maskSensitiveData(meta)
+    message: sanitizedMessage
+  };
+
+  // Add correlation/tracing fields (in consistent order)
+  if (context.correlationId) entry.correlationId = context.correlationId;
+  if (context.traceId) entry.traceId = context.traceId;
+  if (context.operationId) entry.operationId = context.operationId;
+  if (context.requestId) entry.requestId = context.requestId;
+
+  // Add route if present (route is stored in context by middleware)
+  if (context.route) entry.route = context.route;
+
+  // Add latency if present in metadata
+  if (typeof mergedMeta.latency === 'number') entry.latency = mergedMeta.latency;
+
+  // Add remaining context fields (userId, transactionId, etc.)
+  const { correlationId, traceId, operationId, requestId, route, latency: _, ...contextRest } = context;
+  const contextFields = { ...contextRest };
+
+  // Add remaining metadata fields
+  const { latency: __, ...metaRest } = mergedMeta;
+  const metaFields = { ...metaRest };
+
+  return {
+    ...entry,
+    ...contextFields,
+    ...metaFields
   };
 }
 
