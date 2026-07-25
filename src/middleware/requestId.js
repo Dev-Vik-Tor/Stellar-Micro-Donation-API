@@ -67,7 +67,7 @@ const requestIdMiddleware = (req, res, next) => {
     log.setContext({
       requestId,
       method: req.method,
-      path: req.path,
+      route: req.path,
       userAgent: req.get('User-Agent'),
       ip: req.ip,
       ...(context && { correlationId: context.correlationId, traceId: context.traceId }),

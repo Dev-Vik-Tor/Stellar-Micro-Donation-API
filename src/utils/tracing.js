@@ -366,6 +366,51 @@ async function traceStellarCall(operation, attributes, fn) {
   );
 }
 
+// ─── Webhook Instrumentation ──────────────────────────────────────────────────
+
+/**
+ * Wrap a webhook delivery to emit a child span with delivery details.
+ * Automatically captures delivery success/failure and injects trace headers.
+ *
+ * @param {string} webhookUrl - Target webhook URL
+ * @param {Object} payload - Webhook payload
+ * @param {Object} [attributes] - Additional span attributes (webhookId, event, etc.)
+ * @param {Function} fn - Async function performing the webhook delivery
+ * @returns {Promise<*>} Delivery result
+ */
+async function traceWebhookDelivery(webhookUrl, payload, attributes, fn) {
+  if (typeof attributes === 'function') {
+    fn = attributes;
+    attributes = {};
+  }
+
+  const url = new URL(webhookUrl);
+
+  return withSpan(
+    `webhook.delivery ${url.hostname}`,
+    {
+      'http.method': 'POST',
+      'http.url': webhookUrl,
+      'peer.service': 'webhook-endpoint',
+      'span.kind': 'client',
+      ...attributes,
+    },
+    async (span) => {
+      try {
+        const result = await fn(span);
+        if (result && result.statusCode) {
+          span.setAttribute('http.status_code', result.statusCode);
+        }
+        return result;
+      } catch (err) {
+        span.recordException(err);
+        throw err;
+      }
+    },
+    { kind: api.SpanKind.CLIENT }
+  );
+}
+
 // ─── Context Propagation ──────────────────────────────────────────────────────
 
 /**
@@ -569,6 +614,7 @@ module.exports = {
   // Domain-specific wrappers
   traceDbQuery,
   traceStellarCall,
+  traceWebhookDelivery,
 
   // Propagation
   injectTraceHeaders,

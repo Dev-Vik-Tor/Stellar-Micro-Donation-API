@@ -29,6 +29,15 @@ module.exports = {
       varsIgnorePattern: '^_',
     }],
 
+    // File length budget: encourage files under 1000 lines (warn) to prevent
+    // unbounded growth without blocking all work. Grandfathered large files
+    // are exempt while they're being decomposed. New files must stay under budget.
+    'max-lines': ['warn', {
+      max: 1000,
+      skipBlankLines: true,
+      skipComments: true,
+    }],
+
     // Security rules. no-secrets flags high-entropy strings; the patterns below are
     // verified non-secrets (doc paths, URLs, SQL/identifier names, env-var doc
     // strings, OpenAPI examples, the standard RFC 4648 base32 alphabet). Real
@@ -76,6 +85,16 @@ module.exports = {
     'local/no-floating-promises': 'error',
   },
   overrides: [
+    {
+      // Grandfathered large files: exempt from max-lines while being decomposed.
+      // As decomposition PRs land, remove entries from this list one by one.
+      // Issue tracking: #1211 (split MockStellarService), #1212 (decompose DonationService),
+      // #1213 (decompose wallet route), #1214 (decompose donation route)
+      files: GRANDFATHERED_LARGE_FILES,
+      rules: {
+        'max-lines': 'off',
+      },
+    },
     {
       // Enforce structured logging in all service source files. Operational/CLI
       // scripts (migrations, the env-validation boot check) print to the console

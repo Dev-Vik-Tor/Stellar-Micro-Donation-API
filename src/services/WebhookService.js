@@ -503,11 +503,20 @@ class WebhookService {
       return { delivered: false, error: 'Invalid webhook URL' };
     }
 
+    const timestamp = new Date().toISOString();
     const body = JSON.stringify({
       event: 'recurring_donation.persistent_failure',
       ...payload,
-      timestamp: payload.timestamp || new Date().toISOString(),
+      timestamp,
+      correlationContext: {
+        correlationId: generateCorrelationHeaders()['X-Correlation-ID'],
+        traceId: generateCorrelationHeaders()['X-Trace-ID'],
+        operationId: generateCorrelationHeaders()['X-Operation-ID'],
+      },
     });
+
+    // Get correlation headers to propagate to webhook
+    const correlationHeaders = generateCorrelationHeaders();
 
     return new Promise((resolve) => {
       const transport = parsedUrl.protocol === 'https:' ? https : http;
@@ -521,6 +530,8 @@ class WebhookService {
           'Content-Length': Buffer.byteLength(body),
           'User-Agent': 'Stella-Donation-API/1.0',
           'X-Stella-Event': 'recurring_donation.persistent_failure',
+          'X-Signature-Timestamp': timestamp,
+          ...correlationHeaders,
         },
         timeout: 10000,
       };
