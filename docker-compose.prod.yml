@@ -28,12 +28,15 @@ services:
       - DB_PATH=/app/data/donations.db
       - LOG_LEVEL=info
       - SECURE_SECRETS=true
+      - SHUTDOWN_TIMEOUT_MS=30000
     volumes:
       # Persist SQLite database across container restarts
       - db_data:/app/data
       # Mount logs directory for external log aggregation
       - logs:/app/logs
     restart: always
+    # Allow the 30-second shutdown budget to complete before SIGKILL.
+    stop_grace_period: 35s
     # Resource limits to prevent container resource exhaustion
     deploy:
       resources:

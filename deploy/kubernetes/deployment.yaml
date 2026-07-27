@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stellar-micro-donation-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stellar-micro-donation-api
+  template:
+    metadata:
+      labels:
+        app: stellar-micro-donation-api
+    spec:
+      # Includes the 5-second preStop hook, the application's
+      # 30-second shutdown budget, and a 5-second buffer.
+      terminationGracePeriodSeconds: 40
+
+      containers:
+        - name: api
+          image: your-registry/stellar-micro-donation-api:latest
+          ports:
+            - name: http
+              containerPort: 3000
+
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: SHUTDOWN_TIMEOUT_MS
+              value: "30000"
+
+          resources:
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
