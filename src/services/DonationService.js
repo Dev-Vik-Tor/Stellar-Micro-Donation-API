@@ -323,17 +323,15 @@ class DonationService {
       return r;
     });
 
-    // Emit donation.created to trigger cache invalidation and other listeners (non-blocking)
-    try {
-      donationEvents.emit(donationEvents.constructor.EVENTS?.CREATED || 'donation.created', {
-        id: dbResult.id,
-        senderId,
-        receiverId,
-        amount,
-      });
-    } catch (err) {
-      log.error('DONATION_SERVICE', 'Failed to emit donation.created event', { error: err.message });
-    }
+    // Emit donation.created to trigger cache invalidation and other listeners (non-blocking).
+    // emitLifecycleEvent() wraps each listener in its own try/catch so a single
+    // failing listener cannot prevent sibling listeners from running.
+    donationEvents.emitLifecycleEvent(donationEvents.constructor.EVENTS?.CREATED || 'donation.created', {
+      id: dbResult.id,
+      senderId,
+      receiverId,
+      amount,
+    });
 
     if (campaign_id) {
       await this.processCampaignContribution(campaign_id, amount).catch(err => {
