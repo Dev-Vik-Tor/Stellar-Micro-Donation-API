@@ -110,4 +110,25 @@ describe('schemaValidation - unknown field stripping', () => {
     expect(res.body.body).not.toHaveProperty('role');
     expect(res.body.body).not.toHaveProperty('injected');
   });
+
+  test('trims field values when trim: true is specified in schema', async () => {
+    const schema = {
+      body: {
+        fields: {
+          name: { type: 'string', required: true, trim: true },
+          key: { type: 'string', required: true, trim: true },
+        },
+      },
+    };
+    const app = makeApp(schema);
+    const res = await request(app)
+      .post('/test')
+      .send({ name: '  Alice  ', key: '  GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H  ' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.body).toEqual({
+      name: 'Alice',
+      key: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H',
+    });
+  });
 });

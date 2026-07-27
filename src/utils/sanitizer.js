@@ -209,15 +209,15 @@ function sanitizeText(input, options = {}) {
   // Step 6: Remove script tags and dangerous event handlers
   sanitized = removeScriptTagsAndHandlers(sanitized);
 
-  // Step 7: HTML entity encoding for XSS prevention (if enabled)
-  if (encodeHtml) {
-    sanitized = encodeHtmlEntities(sanitized);
-  }
-
-  // Step 8: Optionally restrict to safe characters
+  // Step 7: Optionally restrict to safe characters
   if (!allowSpecialChars) {
     // Allow only alphanumeric, spaces, and basic punctuation
     sanitized = sanitized.replace(/[^a-zA-Z0-9\s\-_.@]/g, '');
+  }
+
+  // Step 8: HTML entity encoding for XSS prevention (if enabled and special chars allowed)
+  if (encodeHtml && allowSpecialChars) {
+    sanitized = encodeHtmlEntities(sanitized);
   }
 
   // Step 9: Truncate to maximum length
