@@ -94,6 +94,15 @@ spec:
           env:
             - name: NODE_ENV
               value: production
+            - name: SHUTDOWN_TIMEOUT_MS
+              value: "30000"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
           livenessProbe:
             httpGet:
               path: /health/live
@@ -113,10 +122,14 @@ spec:
           lifecycle:
             preStop:
               exec:
-                # Give in-flight requests a few seconds to drain before SIGTERM
+                # Allow readiness changes to propagate before SIGTERM.
                 command: ["/bin/sh", "-c", "sleep 5"]
-      terminationGracePeriodSeconds: 30
+      # 5-second preStop + 30-second shutdown budget + 5-second buffer.
+      terminationGracePeriodSeconds: 40
 ```
+
+The reference Kubernetes workload configuration is available at
+`deploy/kubernetes/deployment.yaml`.
 
 ## Docker / Compose Health Check
 

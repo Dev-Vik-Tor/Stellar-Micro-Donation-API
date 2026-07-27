@@ -87,6 +87,7 @@ The production deployment uses file-based secret injection. Configure these envi
 | `DB_PATH` | SQLite database location | `/app/data/donations.db` |
 | `LOG_LEVEL` | Logging level | `info`, `debug`, `error` |
 | `SECURE_SECRETS` | Enable secure secret file handling | `true` |
+| `SHUTDOWN_TIMEOUT_MS` | Graceful-shutdown budget in milliseconds | `30000` |
 
 ## Resource Configuration
 
@@ -94,13 +95,21 @@ The production docker-compose applies the following resource limits:
 
 ### CPU
 - **Limit**: 2 CPUs max
-- **Reservation**: 1 CPU (guaranteed)
+- **Reservation/request**: 1 CPU
 
 ### Memory
 - **Limit**: 1 GB max
-- **Reservation**: 512 MB (guaranteed)
+- **Reservation/request**: 512 MB
 
-Adjust these values based on your expected traffic and infrastructure:
+Adjust these values based on your expected traffic and infrastructure.
+
+An initial local process-level resource observation using the existing load suite with 10
+concurrent users and 50 iterations per scenario reached approximately one CPU
+core and 151 MiB maximum resident memory. The recommended 1 CPU / 512 MiB
+request and 2 CPU / 1 GiB limit provide scheduling capacity and burst
+headroom above that observation. Because the donation-creation scenario had a
+separate functional baseline failure during this run, operators should repeat
+the profile with healthy production-like traffic before reducing these values.
 
 ```yaml
 deploy:
@@ -112,6 +121,12 @@ deploy:
       cpus: '1.0'
       memory: 512M
 ```
+
+## Graceful Container Termination
+
+The application uses `SHUTDOWN_TIMEOUT_MS=30000`, giving it 30 seconds to drain in-flight requests after `SIGTERM`. The production Compose service sets `stop_grace_period: 35s`, providing a five-second buffer before Docker sends `SIGKILL`.
+
+The container grace period must be greater than or equal to the application shutdown budget.
 
 ## Restart Policy
 

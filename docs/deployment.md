@@ -138,4 +138,4 @@ The server handles `SIGTERM` and `SIGINT` by:
 2. Waiting for in-flight requests to complete
 3. Closing the database connection
 
-Kubernetes/ECS will send `SIGTERM` before killing the container — the default 30-second grace period is sufficient.
+Kubernetes/ECS sends `SIGTERM` before killing the container. Configure the orchestrator grace period to exceed the application shutdown budget and include time for lifecycle hooks.

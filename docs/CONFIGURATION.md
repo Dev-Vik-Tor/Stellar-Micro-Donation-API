@@ -51,8 +51,8 @@ application. Variables are grouped by concern. For each variable the table shows
 | `API_PREFIX` | string | `/api/v1` | no | Base path prefix prepended to all API routes |
 | `TRUSTED_PROXIES` | string | `loopback` | no | Comma-separated list of trusted proxy IPs/CIDRs. Passed to Express `trust proxy`. Set to the address of your load balancer in production |
 | `INSTANCE_ID` | string | hostname | no | Unique identifier for this process instance. Appears in structured log output for distributed tracing |
-| `SHUTDOWN_TIMEOUT` | number | `10000` | no | Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit |
-| `SHUTDOWN_TIMEOUT_MS` | number | `10000` | no | Milliseconds to wait for graceful shutdown before force-exit |
+| `SHUTDOWN_TIMEOUT` | number | `30000` | no | Alias for `SHUTDOWN_TIMEOUT_MS` (milliseconds). Time allowed for in-flight requests to drain before force-exit |
+| `SHUTDOWN_TIMEOUT_MS` | number | `30000` | no | Milliseconds to wait for graceful shutdown before force-exit |
 | `REQUEST_TIMEOUT_MS` | number | `30000` | no | Global per-request timeout in milliseconds. Streaming endpoints are exempt |
 
 ---
