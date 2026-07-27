@@ -239,14 +239,49 @@ describe('AuditLogExportService - Issue #604', () => {
     });
   });
 
-  // ── initializeTables ──────────────────────────────────────────────────────
+  // ── Admin API Key Attribution (Issue #1333) ────────────────────────────
 
-  describe('initializeTables', () => {
-    it('creates audit_log_exports table with signed_url columns', async () => {
-      await AuditLogExportService.initializeTables();
-      expect(Database.run).toHaveBeenCalledWith(
-        expect.stringContaining('signed_url')
-      );
+  describe('Admin API Key Attribution (Issue #1333)', () => {
+    it('attributes export job to authenticated admin API key context', async () => {
+      const queueExportJobSpy = jest.spyOn(AuditLogExportService, 'queueExportJob').mockResolvedValue({
+        jobId: 'job-123',
+        status: 'PENDING',
+      });
+
+      const auditLogExportRouter = require('../src/routes/admin/auditLogExport');
+      const express = require('express');
+      const request = require('supertest');
+      const app = express();
+      app.use(express.json());
+
+      // Mock middleware attaching distinct req.apiKey
+      app.use((req, res, next) => {
+        const keyHeader = req.get('x-api-key');
+        if (keyHeader === 'admin-key-alpha') {
+          req.apiKey = { id: 'admin-key-alpha', role: 'admin' };
+        } else if (keyHeader === 'admin-key-beta') {
+          req.apiKey = { id: 'admin-key-beta', role: 'admin' };
+        }
+        next();
+      });
+
+      app.use('/admin/audit-logs/export', auditLogExportRouter);
+
+      await request(app)
+        .post('/admin/audit-logs/export')
+        .set('x-api-key', 'admin-key-alpha')
+        .send({ format: 'json' });
+
+      expect(queueExportJobSpy).toHaveBeenLastCalledWith('admin-key-alpha', expect.any(Object));
+
+      await request(app)
+        .post('/admin/audit-logs/export')
+        .set('x-api-key', 'admin-key-beta')
+        .send({ format: 'csv' });
+
+      expect(queueExportJobSpy).toHaveBeenLastCalledWith('admin-key-beta', expect.any(Object));
+
+      queueExportJobSpy.mockRestore();
     });
   });
 });

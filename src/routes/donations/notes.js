@@ -4,7 +4,7 @@
  * Handles all endpoints that operate on a specific donation by ID:
  *   GET    /donations/:id/receipt           — generate PDF receipt
  *   POST   /donations/:id/receipt/email     — email PDF receipt
- *   GET    /donations/:id/memo/decrypt      — decrypt encrypted memo
+ *   POST   /donations/:id/memo/decrypt      — decrypt encrypted memo
  *   GET    /donations/:id/certificate       — NFT certificate details
  *   GET    /donations/:id/certificate/ipfs  — IPFS certificate pinning
  *   GET    /donations/:id/impact            — real-world impact metrics
@@ -74,7 +74,7 @@ router.get('/:id/receipt', checkPermission(PERMISSIONS.DONATIONS_READ), donation
  * Send a PDF receipt to the provided email address.
  * Body: { email: string }
  */
-router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
+router.post('/:id/receipt/email', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const ReceiptService = require('../../services/ReceiptService');
     const { email } = req.body;
@@ -102,23 +102,23 @@ router.post('/:id/receipt/email', requireApiKey, donationIdParamSchema, payloadS
   }
 }));
 
-// ─── GET /donations/:id/memo/decrypt ─────────────────────────────────────────
+// ─── POST /donations/:id/memo/decrypt ────────────────────────────────────────
 
 /**
- * GET /donations/:id/memo/decrypt
+ * POST /donations/:id/memo/decrypt
  * Decrypt an encrypted memo for a specific donation.
  *
  * Security note: In production, memo decryption should be performed
  * client-side so that private keys never leave the user's device.
  * This endpoint is provided for server-side integrations and testing only.
  *
- * Query params:
+ * Body:
  *   - recipientSecret {string} Stellar S... secret key of the recipient
  */
-router.get('/:id/memo/decrypt', requireApiKey, donationIdParamSchema, asyncHandler(async (req, res, next) => {
+router.post('/:id/memo/decrypt', requireApiKey, checkPermission(PERMISSIONS.DONATIONS_READ), donationIdParamSchema, payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), asyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { recipientSecret } = req.query;
+    const { recipientSecret } = req.body || {};
 
     const transaction = Transaction.getById(id);
     if (!transaction) {

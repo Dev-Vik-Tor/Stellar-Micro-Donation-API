@@ -38,6 +38,9 @@ function toStroops(xlm) {
   if (!/^-?\d+(\.\d+)?$/.test(str)) {
     throw new Error(`Invalid XLM amount: ${xlm}`);
   }
+  if (str.startsWith('-')) {
+    throw new Error(`Amount must be non-negative: ${xlm}`);
+  }
   const [whole, frac = ''] = str.split('.');
   // Pad / truncate fractional part to exactly 7 digits
   const fracPadded = frac.padEnd(7, '0').slice(0, 7);
