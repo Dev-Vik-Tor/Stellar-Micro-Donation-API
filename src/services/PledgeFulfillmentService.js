@@ -37,17 +37,22 @@ async function checkAndFulfill(campaignId) {
     [campaignId]
   );
 
-  const fulfilled = await Database.query(
-    `SELECT * FROM pledges WHERE campaign_id = ? AND status = 'fulfilled'`,
-    [campaignId]
-  );
+  // Get only newly fulfilled pledges (those without webhook_sent_at)
+  const newlyFulfilled = await Pledge.getNewlyFulfilledPledges(campaignId);
 
-  for (const pledge of fulfilled) {
-    WebhookService.deliver('pledge.fulfilled', { pledge }).catch(() => {});
+  // Send webhooks and mark them as sent
+  for (const pledge of newlyFulfilled) {
+    try {
+      await WebhookService.deliver('pledge.fulfilled', { pledge });
+      await Pledge.markWebhookSent(pledge.id);
+    } catch (error) {
+      log.error('PLEDGE', `Failed to deliver webhook for pledge ${pledge.id}: ${error.message}`);
+      // Don't mark as sent if delivery failed
+    }
   }
 
-  log.info('PLEDGE', `Fulfilled ${fulfilled.length} pledges for campaign ${campaignId}`);
-  return { fulfilled: fulfilled.length };
+  log.info('PLEDGE', `Fulfilled ${newlyFulfilled.length} pledges for campaign ${campaignId}`);
+  return { fulfilled: newlyFulfilled.length };
 }
 
 /**
@@ -61,11 +66,21 @@ async function expireOverdue(now = new Date().toISOString()) {
   const changed = await Pledge.expireOverdue(now);
 
   if (changed > 0) {
-    const expired = await Pledge.getExpiredPledges(now);
-    for (const pledge of expired) {
-      WebhookService.deliver('pledge.expired', { pledge }).catch(() => {});
+    // Get only newly expired pledges (those without webhook_sent_at)
+    const newlyExpired = await Pledge.getNewlyExpiredPledges(now);
+    
+    // Send webhooks and mark them as sent
+    for (const pledge of newlyExpired) {
+      try {
+        await WebhookService.deliver('pledge.expired', { pledge });
+        await Pledge.markWebhookSent(pledge.id);
+      } catch (error) {
+        log.error('PLEDGE', `Failed to deliver webhook for expired pledge ${pledge.id}: ${error.message}`);
+        // Don't mark as sent if delivery failed
+      }
     }
-    log.info('PLEDGE', `Expired ${changed} overdue pledges`);
+    
+    log.info('PLEDGE', `Expired ${changed} overdue pledges, sent ${newlyExpired.length} webhooks`);
   }
 
   return { expired: changed };

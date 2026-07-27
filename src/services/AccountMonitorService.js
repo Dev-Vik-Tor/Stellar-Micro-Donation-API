@@ -232,8 +232,7 @@ class AccountMonitorService {
           timeout: 5000,
         });
       } else if (monitor.alertConfig.channel === 'email') {
-        // Placeholder — wire up nodemailer / SES in production
-        log.info('ACCOUNT_MONITOR_SERVICE', 'EMAIL alert queued', { email: monitor.alertConfig.email, payload });
+        await this._sendEmailAlert(monitor.alertConfig.email, monitor, alert);
       }
       logEntry.delivered = true;
     } catch (err) {
@@ -242,6 +241,103 @@ class AccountMonitorService {
     }
 
     this._alertLog.push(logEntry);
+  }
+
+  /**
+   * Send email alert using nodemailer
+   * @private
+   * @param {string} email - Recipient email address
+   * @param {object} monitor - Monitor configuration
+   * @param {object} alert - Alert details
+   */
+  async _sendEmailAlert(email, monitor, alert) {
+    // Check if SMTP is configured
+    if (!process.env.SMTP_HOST || !process.env.SMTP_PORT) {
+      log.warn('ACCOUNT_MONITOR_SERVICE', 'SMTP not configured, skipping email alert', { email });
+      throw new Error('SMTP configuration is required for email alerts');
+    }
+
+    // Initialize nodemailer transporter
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: process.env.SMTP_USER ? {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      } : undefined,
+    });
+
+    // Create email subject and body based on alert condition
+    let subject, text, html;
+    
+    switch (alert.condition) {
+      case 'incoming_transaction':
+        subject = `Stellar Alert: Incoming transaction to ${monitor.accountId}`;
+        text = `An incoming transaction of ${alert.tx.amount} XLM was detected on account ${monitor.accountId}.`;
+        html = `<h2>Incoming Transaction Alert</h2>
+                <p>An incoming transaction was detected on account <strong>${monitor.accountId}</strong>.</p>
+                <ul>
+                  <li><strong>Amount:</strong> ${alert.tx.amount} XLM</li>
+                  <li><strong>From:</strong> ${alert.tx.source || 'Unknown'}</li>
+                  <li><strong>Timestamp:</strong> ${new Date().toISOString()}</li>
+                  <li><strong>Monitor ID:</strong> ${monitor.id}</li>
+                </ul>`;
+        break;
+        
+      case 'low_balance':
+        subject = `Stellar Alert: Low balance on ${monitor.accountId}`;
+        text = `Account ${monitor.accountId} balance (${alert.balance} XLM) is below threshold (${monitor.balanceThreshold} XLM).`;
+        html = `<h2>Low Balance Alert</h2>
+                <p>Account <strong>${monitor.accountId}</strong> has a low balance.</p>
+                <ul>
+                  <li><strong>Current Balance:</strong> ${alert.balance} XLM</li>
+                  <li><strong>Threshold:</strong> ${monitor.balanceThreshold} XLM</li>
+                  <li><strong>Timestamp:</strong> ${new Date().toISOString()}</li>
+                  <li><strong>Monitor ID:</strong> ${monitor.id}</li>
+                </ul>`;
+        break;
+        
+      case 'large_transaction':
+        subject = `Stellar Alert: Large transaction on ${monitor.accountId}`;
+        text = `A large transaction of ${alert.tx.amount} XLM was detected on account ${monitor.accountId}.`;
+        html = `<h2>Large Transaction Alert</h2>
+                <p>A large transaction was detected on account <strong>${monitor.accountId}</strong>.</p>
+                <ul>
+                  <li><strong>Amount:</strong> ${alert.tx.amount} XLM</li>
+                  <li><strong>Threshold:</strong> ${monitor.amountThreshold} XLM</li>
+                  <li><strong>Timestamp:</strong> ${new Date().toISOString()}</li>
+                  <li><strong>Monitor ID:</strong> ${monitor.id}</li>
+                </ul>`;
+        break;
+        
+      default:
+        subject = `Stellar Alert: ${alert.condition} on ${monitor.accountId}`;
+        text = `Alert condition "${alert.condition}" triggered on account ${monitor.accountId}.`;
+        html = `<h2>Account Alert</h2>
+                <p>Alert condition <strong>${alert.condition}</strong> was triggered on account <strong>${monitor.accountId}</strong>.</p>`;
+    }
+
+    const mailOptions = {
+      from: process.env.SMTP_FROM || 'alerts@stellar-donations.org',
+      to: email,
+      subject,
+      text,
+      html,
+    };
+
+    try {
+      await transporter.sendMail(mailOptions);
+      log.info('ACCOUNT_MONITOR_SERVICE', 'Email alert sent successfully', { email, monitorId: monitor.id });
+    } catch (error) {
+      log.error('ACCOUNT_MONITOR_SERVICE', 'Failed to send email alert', { 
+        email, 
+        monitorId: monitor.id,
+        error: error.message 
+      });
+      throw error;
+    }
   }
 }
 
