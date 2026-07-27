@@ -15,6 +15,7 @@ const { sanitizeLabel, sanitizeName, sanitizeStellarAddress } = require('../util
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const { paginateCollection } = require('../utils/pagination');
 const log = require('../utils/log');
+const DonationService = require('./DonationService');
 
 class WalletService {
   constructor(stellarService = null) {
@@ -83,6 +84,22 @@ class WalletService {
             reason: fundResult.error || 'non-testnet network'
           });
         }
+      }
+    }
+
+    // Invalidate recipient account cache to prevent stale negative cache entries
+    // This allows donations to succeed immediately after wallet creation
+    if (funded) {
+      try {
+        DonationService.invalidateRecipientAccountCache(sanitizedAddress);
+        log.debug('WALLET_SERVICE', 'Invalidated recipient account cache after funding', {
+          address: sanitizedAddress
+        });
+      } catch (err) {
+        log.warn('WALLET_SERVICE', 'Failed to invalidate recipient account cache', {
+          address: sanitizedAddress,
+          error: err.message
+        });
       }
     }
 
