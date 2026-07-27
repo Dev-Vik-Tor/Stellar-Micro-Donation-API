@@ -19,7 +19,8 @@ const AuditLogService = require('../../services/AuditLogService');
  */
 router.get('/status', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async (req, res, next) => {
   try {
-    const recurringDonationScheduler = require('../../services/RecurringDonationScheduler');
+    const serviceContainer = require('../../config/serviceContainer');
+    const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
     const status = recurringDonationScheduler.getDetailedStatus();
     
     res.json({
@@ -38,7 +39,8 @@ router.get('/status', checkPermission(PERMISSIONS.ADMIN_ALL), asyncHandler(async
  */
 router.post('/pause', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
-    const recurringDonationScheduler = require('../../services/RecurringDonationScheduler');
+    const serviceContainer = require('../../config/serviceContainer');
+    const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
     
     const wasPaused = recurringDonationScheduler.isPaused();
     recurringDonationScheduler.pause();
@@ -76,7 +78,8 @@ router.post('/pause', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter
  */
 router.post('/resume', checkPermission(PERMISSIONS.ADMIN_ALL), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyncHandler(async (req, res, next) => {
   try {
-    const recurringDonationScheduler = require('../../services/RecurringDonationScheduler');
+    const serviceContainer = require('../../config/serviceContainer');
+    const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
     
     const wasPaused = recurringDonationScheduler.isPaused();
     recurringDonationScheduler.resume();
