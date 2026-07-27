@@ -1859,14 +1859,26 @@ class DonationService {
       reverseTxId: reverseResult.transactionId
     });
 
+    const actualFee = reverseResult.feePaid !== undefined
+      ? reverseResult.feePaid
+      : (reverseResult.fee !== undefined ? reverseResult.fee : (reverseResult.fee_charged !== undefined ? reverseResult.fee_charged : 100));
+    const networkFeeDeducted = typeof actualFee === 'number' && actualFee >= 100 ? actualFee / STROOPS_PER_XLM : Number(actualFee || 0);
+
+    const analyticsFeePercentage = donation.analyticsFeePercentage !== undefined ? donation.analyticsFeePercentage : 0;
+    const analyticsFee = donation.analyticsFee !== undefined
+      ? donation.analyticsFee
+      : (donation.amount * analyticsFeePercentage) / 100;
+    const refundedAmount = donation.amount - analyticsFee;
+
     return {
       refundId: pendingRecord.id,
       originalDonationId: donationId,
       reverseTxId: reverseResult.transactionId,
       reverseLedger: reverseResult.ledger,
       amount: donation.amount,
-      refundedAmount: donation.amount,
-      networkFeeDeducted: 0,
+      refundedAmount: refundedAmount > 0 ? refundedAmount : donation.amount,
+      analyticsFeeRetained: analyticsFee,
+      networkFeeDeducted,
       reason,
       notes: notes || null,
       refundedAt: new Date().toISOString(),
