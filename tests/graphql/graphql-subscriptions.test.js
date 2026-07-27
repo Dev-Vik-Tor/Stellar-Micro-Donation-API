@@ -12,7 +12,7 @@ process.env.API_KEYS = 'test-key-sub';
 
 jest.mock('../../src/models/apiKeys', () => ({
   initializeApiKeysTable: jest.fn().mockResolvedValue(undefined),
-  validateApiKey: jest.fn().mockResolvedValue(null),\
+  validateApiKey: jest.fn().mockResolvedValue(null),
   
   validateKey: jest.fn().mockResolvedValue(null),
   getApiKeyByValue: jest.fn().mockResolvedValue(null),
