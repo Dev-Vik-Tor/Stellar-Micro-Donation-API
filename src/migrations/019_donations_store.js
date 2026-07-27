@@ -10,8 +10,8 @@ exports.up = async (db) => {
   await db.run(`
     CREATE TABLE IF NOT EXISTS donations_store (
       id TEXT PRIMARY KEY,
-      donor TEXT,
-      recipient TEXT,
+      donor TEXT CHECK (donor IS NULL OR (length(donor) = 56 AND donor GLOB 'G*')),
+      recipient TEXT CHECK (recipient IS NULL OR (length(recipient) = 56 AND recipient GLOB 'G*')),
       amount_stroops INTEGER,
       amount_text TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
