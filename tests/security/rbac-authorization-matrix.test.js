@@ -10,6 +10,9 @@
  *      removes a check will immediately break this suite.
  *   2. Stale-entry sentinel — a MATRIX_ENTRIES row referencing a path that no
  *      longer exists in ROUTE_PERMISSIONS will fail the sentinel test.
+ *   3. New-route sentinel — a route added to ROUTE_PERMISSIONS without a
+ *      corresponding MATRIX_ENTRIES entry will fail the coverage test.
+ *      No silently-unprotected routes.
  *
  * HOW IT WORKS
  * ────────────
@@ -22,8 +25,8 @@
  * When you add a new protected route:
  *   1. Add a row to MATRIX_ENTRIES with the correct allowedRoles / deniedRoles.
  *   2. Also add it to ROUTE_PERMISSIONS in src/config/permissionMatrix.js.
- * The sentinel at the bottom will warn about uncovered routes and will fail for
- * stale entries (routes removed from ROUTE_PERMISSIONS but still in MATRIX_ENTRIES).
+ * The sentinel at the bottom will hard-fail for uncovered routes and for stale
+ * entries (routes removed from ROUTE_PERMISSIONS but still in MATRIX_ENTRIES).
  */
 
 'use strict';
@@ -125,9 +128,14 @@ const MATRIX_ENTRIES = [
     allowedRoles: ['admin', 'user', 'guest', 'noauth'],
     deniedRoles:  [],
   },
+  {
+    method: 'GET',   path: '/api/v1/donations/stats/by-tag',
+    permission: 'stats:read',
+    allowedRoles: ['admin', 'user', 'guest', 'noauth'],
+    deniedRoles:  [],
+  },
   // ── Donation write routes (user+ only) ───────────────────────────────────────
   {
-    // ROUTE_PERMISSIONS registers this as /donations/send
     method: 'POST',  path: '/api/v1/donations/send',
     permission: 'donations:create',
     allowedRoles: ['admin', 'user'],
@@ -140,7 +148,6 @@ const MATRIX_ENTRIES = [
     deniedRoles:  ['guest', 'noauth'],
   },
   {
-    // verify uses checkPermission(DONATIONS_READ) — allowed for guest too
     method: 'POST',  path: '/api/v1/donations/verify',
     permission: 'donations:verify',
     allowedRoles: ['admin', 'user', 'guest', 'noauth'],
@@ -161,6 +168,12 @@ const MATRIX_ENTRIES = [
     deniedRoles:  ['guest', 'noauth'],
   },
   {
+    method: 'GET',   path: '/api/v1/wallets/999/transactions',
+    permission: 'wallets:read',
+    allowedRoles: ['admin', 'user'],
+    deniedRoles:  ['guest', 'noauth'],
+  },
+  {
     method: 'POST',  path: '/api/v1/wallets',
     permission: 'wallets:create',
     allowedRoles: ['admin', 'user'],
@@ -173,7 +186,7 @@ const MATRIX_ENTRIES = [
     deniedRoles:  ['guest', 'noauth'],
   },
 
-  // ── Stream / recurring donations ───────────────────────────────────────────────
+  // ── Stream / recurring donations ──────────────────────────────────────────────
   {
     method: 'POST',   path: '/api/v1/stream/create',
     permission: 'stream:create',
@@ -230,6 +243,18 @@ const MATRIX_ENTRIES = [
     allowedRoles: ['admin', 'user', 'guest', 'noauth'],
     deniedRoles:  [],
   },
+  {
+    method: 'GET', path: '/api/v1/stats/analytics-fees',
+    permission: 'stats:read',
+    allowedRoles: ['admin', 'user', 'guest', 'noauth'],
+    deniedRoles:  [],
+  },
+  {
+    method: 'GET', path: '/api/v1/stats/wallet/999/analytics',
+    permission: 'stats:read',
+    allowedRoles: ['admin', 'user', 'guest', 'noauth'],
+    deniedRoles:  [],
+  },
 
   // ── Transaction routes ────────────────────────────────────────────────────────
   {
@@ -258,6 +283,24 @@ const MATRIX_ENTRIES = [
     allowedRoles: ['admin'],
     deniedRoles:  ['user', 'guest', 'noauth'],
   },
+  {
+    method: 'POST', path: '/api/v1/api-keys/999/deprecate',
+    permission: '*',
+    allowedRoles: ['admin'],
+    deniedRoles:  ['user', 'guest', 'noauth'],
+  },
+  {
+    method: 'DELETE', path: '/api/v1/api-keys/999',
+    permission: '*',
+    allowedRoles: ['admin'],
+    deniedRoles:  ['user', 'guest', 'noauth'],
+  },
+  {
+    method: 'POST', path: '/api/v1/api-keys/cleanup',
+    permission: '*',
+    allowedRoles: ['admin'],
+    deniedRoles:  ['user', 'guest', 'noauth'],
+  },
 ];
 
 // ─── Pure-logic permission matrix tests ───────────────────────────────────────
@@ -272,6 +315,7 @@ describe('RBAC permission matrix — pure logic', () => {
     expect(PERMISSION_MATRIX.admin.permissions).toContain('*');
     expect(hasPermission('admin', 'donations:create')).toBe(true);
     expect(hasPermission('admin', 'transactions:sync')).toBe(true);
+    expect(hasPermission('admin', 'nonexistent:action')).toBe(true);
   });
 
   describe('user permissions', () => {
@@ -282,7 +326,7 @@ describe('RBAC permission matrix — pure logic', () => {
       'stats:read',
       'transactions:read', 'transactions:sync',
     ];
-    const DENIED = ['*'];
+    const DENIED = ['*', 'admin:*', 'donations:delete', 'wallets:delete', 'stats:admin'];
     test.each(GRANTED)('user CAN %s', (perm) => {
       expect(hasPermission('user', perm)).toBe(true);
     });
@@ -293,13 +337,24 @@ describe('RBAC permission matrix — pure logic', () => {
 
   describe('guest permissions', () => {
     const GRANTED = ['donations:read', 'stats:read'];
-    const DENIED  = ['donations:create', 'wallets:create', 'wallets:read', 'stream:create', 'transactions:read'];
+    const DENIED  = [
+      'donations:create', 'donations:verify', 'donations:update', 'donations:delete',
+      'wallets:create', 'wallets:read', 'wallets:update', 'wallets:delete',
+      'stream:create', 'stream:read', 'stream:update', 'stream:delete',
+      'transactions:read', 'transactions:sync', 'transactions:simulate',
+      '*', 'admin:*',
+    ];
     test.each(GRANTED)('guest CAN %s', (perm) => {
       expect(hasPermission('guest', perm)).toBe(true);
     });
     test.each(DENIED)('guest CANNOT %s', (perm) => {
       expect(hasPermission('guest', perm)).toBe(false);
     });
+  });
+
+  describe('unknown role returns empty permissions', () => {
+    test('unrecognized role cannot *', () => { expect(hasPermission('nonexistent_role', '*')).toBe(false); });
+    test('unrecognized role cannot donations:read', () => { expect(hasPermission('nonexistent_role', 'donations:read')).toBe(false); });
   });
 });
 
@@ -355,21 +410,22 @@ describe('RBAC HTTP authorization matrix', () => {
 // ─── Matrix coverage sentinel ─────────────────────────────────────────────────
 describe('RBAC matrix coverage sentinel', () => {
   test('every MATRIX_ENTRIES entry has at least one allowedRole', () => {
-    // deniedRoles may be empty for genuinely public routes
     const noAllowed = MATRIX_ENTRIES.filter(e => !e.allowedRoles.length);
     expect(noAllowed).toHaveLength(0);
   });
 
-  test('no MATRIX_ENTRIES reference a path removed from ROUTE_PERMISSIONS', () => {
-    // Build the canonical key set from ROUTE_PERMISSIONS
+  test('no MATRIX_ENTRIES reference a path removed from ROUTE_PERMISSIONS (stale-entry guard)', () => {
     const knownKeys = new Set([
       ...ROUTE_PERMISSIONS.map(r => {
-        const norm = `/api/v1${r.path}`.replace(/:[\w]+/g, '999');
+        const norm = `/api/v1${r.path}`.replace(/:[\\w]+/g, '999');
         return `${r.method}:${norm}`;
       }),
       // api-key routes are registered inline in routes.js, not ROUTE_PERMISSIONS
       'GET:/api/v1/api-keys',
       'POST:/api/v1/api-keys',
+      'POST:/api/v1/api-keys/999/deprecate',
+      'DELETE:/api/v1/api-keys/999',
+      'POST:/api/v1/api-keys/cleanup',
     ]);
 
     const stale = MATRIX_ENTRIES.filter(e => !knownKeys.has(`${e.method}:${e.path}`));
@@ -385,26 +441,45 @@ describe('RBAC matrix coverage sentinel', () => {
     expect(stale).toHaveLength(0);
   });
 
-  test('warns about ROUTE_PERMISSIONS routes not yet covered by MATRIX_ENTRIES', () => {
+  test('every route in ROUTE_PERMISSIONS is covered by MATRIX_ENTRIES (new-route guard)', () => {
     const covered = new Set(MATRIX_ENTRIES.map(e => `${e.method}:${e.path}`));
 
-    const uncovered = ROUTE_PERMISSIONS.filter(r => {
-      const norm = `/api/v1${r.path}`.replace(/:[\w]+/g, '999');
-      return !covered.has(`${r.method}:${norm}`);
-    });
+    const declaredRoutes = new Set(
+      ROUTE_PERMISSIONS.map(r => {
+        const norm = `/api/v1${r.path}`.replace(/:[\\w]+/g, '999');
+        return `${r.method}:${norm}`;
+      })
+    );
+
+    const knownInline = new Set([
+      'GET:/api/v1/api-keys',
+      'POST:/api/v1/api-keys',
+      'POST:/api/v1/api-keys/999/deprecate',
+      'DELETE:/api/v1/api-keys/999',
+      'POST:/api/v1/api-keys/cleanup',
+    ]);
+
+    const uncovered = [];
+    for (const routeKey of declaredRoutes) {
+      if (!covered.has(routeKey)) {
+        uncovered.push(routeKey);
+      }
+    }
+    for (const routeKey of knownInline) {
+      if (!covered.has(routeKey)) {
+        uncovered.push(routeKey);
+      }
+    }
 
     if (uncovered.length) {
-      const lines = uncovered
-        .map(r => `  ${r.method} /api/v1${r.path}  (requires: ${r.permission})`)
-        .join('\n');
-      console.warn(
-        `[RBAC sentinel] Routes in ROUTE_PERMISSIONS not yet covered by MATRIX_ENTRIES:\n${lines}\n` +
-        'Add them to tests/security/rbac-authorization-matrix.test.js to close the matrix.'
+      const lines = uncovered.map(k => `  ${k}`).join('\n');
+      throw new Error(
+        `Routes in ROUTE_PERMISSIONS not yet covered by MATRIX_ENTRIES:\n${lines}\n` +
+        'Add entries to MATRIX_ENTRIES in tests/security/rbac-authorization-matrix.test.js ' +
+        'with the correct allowedRoles/deniedRoles. Every protected route must be in the matrix.'
       );
     }
-    // This assertion is intentionally lenient — new routes emit a warning rather
-    // than hard-failing CI.  The stale-entry check above is the hard gate.
-    expect(true).toBe(true);
+    expect(uncovered).toHaveLength(0);
   });
 });
 
@@ -442,11 +517,126 @@ describe('Scope validator regression', () => {
     expect(hasAllScopes(['donations:read'], ['donations:read', 'wallets:read'])).toBe(false);
   });
 
+  test('hasAllScopes succeeds when all required scopes are present', () => {
+    expect(hasAllScopes(
+      ['donations:read', 'wallets:read', 'stats:read'],
+      ['donations:read', 'stats:read']
+    )).toBe(true);
+  });
+
   test('hasAnyScope succeeds when at least one scope matches', () => {
     expect(hasAnyScope(['donations:read'], ['donations:read', 'wallets:read'])).toBe(true);
   });
 
+  test('hasAnyScope fails when no scopes match', () => {
+    expect(hasAnyScope(['donations:read'], ['wallets:read', 'stream:create'])).toBe(false);
+  });
+
   test('empty key-scopes returns false from raw hasScope (role check is the gate)', () => {
     expect(hasScope([], 'donations:read')).toBe(false);
+  });
+
+  test('null/undefined scopes are handled gracefully', () => {
+    expect(hasScope(null, 'donations:read')).toBe(false);
+    expect(hasScope(undefined, 'donations:read')).toBe(false);
+    expect(hasScope(['donations:read'], null)).toBe(false);
+    expect(hasScope(['donations:read'], undefined)).toBe(false);
+  });
+});
+
+// ─── Combined role + scope access control tests ───────────────────────────────
+describe('Combined role + scope access control', () => {
+  const { hasScope, hasAllScopes, hasAnyScope } = require('../../src/utils/scopeValidator');
+  const { hasPermission } = require('../../src/models/permissions');
+
+  /**
+   * Simulate the dual-check that rbac.js uses for each request:
+   *   roleHasPermission = hasPermission(userRole, requiredPermission)
+   *   scopeHasPermission = hasScope(keyScopes, requiredPermission) [if scopes exist]
+   *   hasAccess = roleHasPermission && scopeHasPermission
+   */
+  function isAccessAllowed(userRole, keyScopes, requiredPermission) {
+    const roleOk = hasPermission(userRole, requiredPermission);
+    if (keyScopes && Array.isArray(keyScopes) && keyScopes.length > 0) {
+      return roleOk && hasScope(keyScopes, requiredPermission);
+    }
+    return roleOk;
+  }
+
+  // ── admin role — always permitted regardless of scopes (* wildcard) ──────────
+  describe('admin role', () => {
+    test('admin with no scopes can access everything', () => {
+      expect(isAccessAllowed('admin', [], 'donations:create')).toBe(true);
+      expect(isAccessAllowed('admin', [], 'wallets:read')).toBe(true);
+      expect(isAccessAllowed('admin', [], 'admin:*')).toBe(true);
+    });
+
+    test('admin with limited scopes can still access everything (wildcard * bypasses scope check)', () => {
+      expect(isAccessAllowed('admin', ['donations:read'], 'wallets:create')).toBe(true);
+      expect(isAccessAllowed('admin', ['donations:read'], 'transactions:sync')).toBe(true);
+    });
+  });
+
+  // ── user role — scope-limited cases ─────────────────────────────────────────
+  describe('user role with scopes', () => {
+    test('user with no scopes (legacy key): role check is the only gate', () => {
+      expect(isAccessAllowed('user', [], 'donations:create')).toBe(true);
+      expect(isAccessAllowed('user', [], 'wallets:read')).toBe(true);
+    });
+
+    test('user with matching scopes: access granted', () => {
+      expect(isAccessAllowed('user', ['donations:create'], 'donations:create')).toBe(true);
+      expect(isAccessAllowed('user', ['wallets:read', 'stats:read'], 'stats:read')).toBe(true);
+    });
+
+    test('user with insufficient scopes: access denied (scope-insufficient case)', () => {
+      expect(isAccessAllowed('user', ['donations:read'], 'donations:create')).toBe(false);
+      expect(isAccessAllowed('user', ['donations:read'], 'wallets:create')).toBe(false);
+      expect(isAccessAllowed('user', ['stats:read'], 'transactions:read')).toBe(false);
+    });
+
+    test('user with wildcard resource scope: all sub-actions permitted', () => {
+      expect(isAccessAllowed('user', ['donations:*'], 'donations:create')).toBe(true);
+      expect(isAccessAllowed('user', ['donations:*'], 'donations:read')).toBe(true);
+      expect(isAccessAllowed('user', ['donations:*'], 'donations:update')).toBe(true);
+      expect(isAccessAllowed('user', ['donations:*'], 'donations:delete')).toBe(true);
+    });
+
+    test('user with resource wildcard denied for other resources', () => {
+      expect(isAccessAllowed('user', ['donations:*'], 'wallets:create')).toBe(false);
+      expect(isAccessAllowed('user', ['donations:*'], 'stats:read')).toBe(false);
+    });
+
+    test('user with narrowed scopes cannot access broader actions', () => {
+      expect(isAccessAllowed('user', ['donations:read'], 'donations:read')).toBe(true);
+      expect(isAccessAllowed('user', ['donations:read'], 'donations:verify')).toBe(false);
+    });
+  });
+
+  // ── guest role — very limited ───────────────────────────────────────────────
+  describe('guest role with scopes', () => {
+    test('guest even with scopes cannot exceed role permissions', () => {
+      expect(isAccessAllowed('guest', ['wallets:read'], 'wallets:read')).toBe(false);
+    });
+
+    test('guest with valid read scopes: access granted', () => {
+      expect(isAccessAllowed('guest', ['donations:read'], 'donations:read')).toBe(true);
+      expect(isAccessAllowed('guest', ['stats:read'], 'stats:read')).toBe(true);
+    });
+  });
+
+  describe('hasAllScopes / hasAnyScope combined with roles', () => {
+    test('user with full scope set satisfies hasAllScopes', () => {
+      const scopes = ['donations:create', 'donations:read', 'wallets:read', 'stats:read'];
+      expect(hasAllScopes(scopes, ['donations:read', 'stats:read'])).toBe(true);
+    });
+
+    test('user with partial scopes fails hasAllScopes', () => {
+      expect(hasAllScopes(['donations:read'], ['donations:read', 'wallets:read'])).toBe(false);
+    });
+
+    test('user with OR scopes satisfies hasAnyScope', () => {
+      expect(hasAnyScope(['donations:read'], ['donations:create', 'donations:read'])).toBe(true);
+    });
   });
 });
