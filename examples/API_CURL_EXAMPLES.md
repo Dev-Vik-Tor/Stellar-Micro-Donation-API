@@ -7,21 +7,25 @@ This guide provides copy-paste curl commands to test the core donation API flows
 ```bash
 # Set your environment variables
 export API_KEY="your-api-key-here"
-export BASE_URL="http://localhost:3000/api"
-export DONOR_PUBLIC_KEY="GBUQWP3BOUZX34ULNQG23RQ6F4BWFIРЕQCLMNZ4QSY47PCNQRICKS57"
-export RECIPIENT_PUBLIC_KEY="GCEZWJG7SSHQUUP7IBRN23JQCQR53ROE44TSBROAM4TOBJOJJU5YV2Z2"
+export BASE_URL="http://localhost:3000/api/v1"
+# Sample Stellar Ed25519 public keys (testnet, DO NOT send real funds to these)
+export DONOR_PUBLIC_KEY="GCBT6W2QOCFDKQAQBWNGNYYGAH2LRHGTEVK5YBL6WRVQPPWJVKUNMOMS"
+export RECIPIENT_PUBLIC_KEY="GCVUHGLGMHYWM6NY33LKPHMX2GHXNMPW6HCO4DLQDG25T4OWDG7JJL6Y"
+export WALLET_PUBLIC_KEY="GCMXPIWRCPVM63NUOZZDHC42CQKEUDLIBS6ZM6A3VD7SJ3UE2OHI6I4T"
 ```
 
 ## 1. Wallet Management
 
 ### Create Wallet
 
+The wallet-create route expects `address` (the Stellar public key), NOT `publicKey`.
+
 ```bash
 curl -X POST "$BASE_URL/wallets" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "publicKey": "'$DONOR_PUBLIC_KEY'",
+    "address": "'$WALLET_PUBLIC_KEY'",
     "name": "My Donation Wallet",
     "metadata": {
       "region": "US",
@@ -41,13 +45,33 @@ curl -X GET "$BASE_URL/wallets/$DONOR_PUBLIC_KEY/transactions" \
 
 ### Create Donation
 
+The custodial donation path expects `receiverId` (not `recipientId`). The wallet IDs are the internal integer IDs of the donor/recipient wallet rows.
+
 ```bash
 curl -X POST "$BASE_URL/donations" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "senderId": "'$DONOR_PUBLIC_KEY'",
-    "recipientId": "'$RECIPIENT_PUBLIC_KEY'",
+    "senderId": 1,
+    "receiverId": 2,
+    "amount": "50.00",
+    "memo": "Education fund donation",
+    "sdgCategories": ["04"]
+  }' | jq .
+```
+
+> **Note:** If you want to use Stellar public keys directly, register them via `POST /wallets` first
+> (use the `address` field) so the custodial layer can resolve them to internal wallet IDs.
+
+### Create Donation (non-custodial)
+
+```bash
+curl -X POST "$BASE_URL/donations" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "donor": "'$DONOR_PUBLIC_KEY'",
+    "recipient": "'$RECIPIENT_PUBLIC_KEY'",
     "amount": "50.00",
     "memo": "Education fund donation",
     "sdgCategories": ["04"]
@@ -84,13 +108,15 @@ curl -X GET "$BASE_URL/donations/limits" \
 
 ### Create Recurring Donation Schedule
 
+The stream/create route expects `donorPublicKey` and `recipientPublicKey` (not `donorId`/`recipientId`).
+
 ```bash
 curl -X POST "$BASE_URL/stream/create" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "donorId": "'$DONOR_PUBLIC_KEY'",
-    "recipientId": "'$RECIPIENT_PUBLIC_KEY'",
+    "donorPublicKey": "'$DONOR_PUBLIC_KEY'",
+    "recipientPublicKey": "'$RECIPIENT_PUBLIC_KEY'",
     "amount": "25.00",
     "frequency": "monthly",
     "startDate": "2026-07-01"
@@ -215,20 +241,20 @@ set -e  # Exit on error
 
 # Set variables
 export API_KEY="dev-key"
-export BASE_URL="http://localhost:3000/api"
-export DONOR="GBUQWP3BOUZX34ULNQG23RQ6F4BWFIРЕQCLMNZ4QSY47PCNQRICKS57"
-export RECIPIENT="GCEZWJG7SSHQUUP7IBRN23JQCQR53ROE44TSBROAM4TOBJOJJU5YV2Z2"
+export BASE_URL="http://localhost:3000/api/v1"
+export DONOR="GCBT6W2QOCFDKQAQBWNGNYYGAH2LRHGTEVK5YBL6WRVQPPWJVKUNMOMS"
+export RECIPIENT="GCVUHGLGMHYWM6NY33LKPHMX2GHXNMPW6HCO4DLQDG25T4OWDG7JJL6Y"
 
 echo "📊 Checking API health..."
 curl -s "$BASE_URL/health" | jq .
 
-echo -e "\n💰 Creating a donation..."
+echo -e "\n💰 Creating a non-custodial donation (uses Stellar public keys)..."
 DONATION=$(curl -s -X POST "$BASE_URL/donations" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "senderId": "'$DONOR'",
-    "recipientId": "'$RECIPIENT'",
+    "donor": "'$DONOR'",
+    "recipient": "'$RECIPIENT'",
     "amount": "50",
     "memo": "Test donation"
   }')
