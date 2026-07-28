@@ -129,6 +129,11 @@ describe('Sanitizer Utility', () => {
       const stellarKey = 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
       expect(sanitizeIdentifier(stellarKey)).toBe(stellarKey);
     });
+
+    test('should not leave HTML-entity residue when input has quotes or ampersands', () => {
+      expect(sanitizeIdentifier("O'Brien")).toBe('OBrien');
+      expect(sanitizeIdentifier("Tom & Jerry")).toBe('Tom  Jerry');
+    });
   });
 
   describe('sanitizeForLogging', () => {

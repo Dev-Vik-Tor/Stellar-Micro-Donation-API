@@ -5,6 +5,28 @@
 
 const config = require('../config');
 
+/**
+ * Calculate the number of decimal places of a numeric value,
+ * robustly handling scientific exponential notation (e.g., 1e-8).
+ * @param {number} num
+ * @returns {number}
+ */
+function getDecimalPlaces(num) {
+  const str = num.toString();
+  if (str.includes('e') || str.includes('E')) {
+    const [base, expStr] = str.toLowerCase().split('e');
+    const exp = parseInt(expStr, 10);
+    if (exp < 0) {
+      const baseDecimals = (base.split('.')[1] || '').length;
+      return baseDecimals + Math.abs(exp);
+    }
+    const baseDecimals = (base.split('.')[1] || '').length;
+    return Math.max(0, baseDecimals - exp);
+  }
+  const decimals = str.split('.')[1];
+  return decimals ? decimals.length : 0;
+}
+
 class DonationValidator {
   constructor() {
     this.minAmount = config.donations.minAmount;
@@ -28,8 +50,7 @@ class DonationValidator {
     }
 
     // Check for excessive decimal places (Stellar maximum precision is 7)
-    const decimals = amount.toString().split('.')[1];
-    if (decimals && decimals.length > 7) {
+    if (getDecimalPlaces(amount) > 7) {
       return {
         valid: false,
         error: 'Amount cannot have more than 7 decimal places (Stellar precision limit)',
