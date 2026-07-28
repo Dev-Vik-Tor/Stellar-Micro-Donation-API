@@ -16,6 +16,12 @@ on:
   workflow_dispatch:
     # Allow manual triggering
 
+# Cancel in-progress runs for the same branch/PR when a new push arrives.
+# Scheduled and manually triggered runs are not cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backup-restore-test:
     runs-on: ubuntu-latest
