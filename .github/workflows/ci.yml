@@ -38,6 +38,7 @@ jobs:
       - run: npm run check-coverage
       - run: npm run openapi:check
       - run: npm run check:no-json-persistence
+      - run: npm run changelog:check
       - run: npm audit --audit-level=high
       - name: Upload coverage reports to artifacts
         if: always()

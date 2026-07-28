@@ -2,6 +2,7 @@
   "name": "stellar-micro-donation-api",
   "version": "1.0.0",
   "description": "Micro-donation API using Stellar blockchain",
+  "license": "MIT",
   "main": "src/app.js",
   "engines": {
     "node": ">=20.0.0",
