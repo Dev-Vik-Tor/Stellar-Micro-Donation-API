@@ -160,92 +160,28 @@ function buildCollection(overrides = {}) {
 }
 
 // ─── Test harness ────────────────────────────────────────────────────────────
-
-function runValidator(fixtureDir) {
-  // The script resolves MD_FILE and POSTMAN_FILE relative to the script's
-  // own directory, not to CWD. To test it in isolation we need to either
-  // patch the script or point the fixtures at the real paths. Easiest: copy
-  // the script into the fixture dir and write a small wrapper that runs it.
-  const wrapperPath = path.join(fixtureDir, 'validate-examples.test.js');
-  const wrapperContent = `
-    // Wrap the validator so it reads fixtures relative to this file.
-    const Module = require('module');
-    const path = require('path');
-    const realResolve = Module._resolveFilename;
-    Module._resolveFilename = function (request, parent, ...rest) {
-      if (request === 'stellar-sdk') return realResolve.call(this, request, parent, ...rest);
-      return realResolve.call(this, request, parent, ...rest);
-    };
-    // Patch the validator's hardcoded paths by monkey-patching its module
-    // exports isn't easy; instead re-implement the path resolution here.
-    const fs = require('fs');
-    const StellarSdk = require('stellar-sdk');
-    const dir = ${JSON.stringify(fixtureDir)};
-    const MD = path.join(dir, 'API_CURL_EXAMPLES.md');
-    const POSTMAN = path.join(dir, 'postman.json');
-    process.env.VALIDATE_DIR = dir;
-    // Just shell out to the real script with an env override. We do that in
-    // the test wrapper by replacing the relative paths via a tiny shim.
-    // Simpler: pass the fixtures via env, but for now run the real script
-    // and trust the test wrote fixtures to the real paths.
-    require(${JSON.stringify(SCRIPT)});
-  `;
-  // The cleanest approach: spawn the script with cwd set to fixtureDir and
-  // a copy of the script that resolves files relative to cwd.
-  return spawnSync('node', ['-e', `
-    const path = require('path');
-    const dir = ${JSON.stringify(fixtureDir)};
-    const script = require(${JSON.stringify(SCRIPT)});
-    // Override by intercepting fs.readFileSync inside the script? No — the
-    // script reads MD_FILE/POSTMAN_FILE via hardcoded absolute paths.
-    // Instead, copy the fixtures to those exact paths for the duration of
-    // this run, then restore. Use a "shadow" indirection: we copy the
-    // real examples files to a tmp location, swap them via symlink, run the
-    // script, restore. But the script uses path.resolve(__dirname, '..')
-    // which means it ALWAYS reads from the repo.
-    // Easier: just spawn the script with cwd=fixtureDir and hope it
-    // resolves paths from CWD. It doesn't — it uses __dirname.
-    console.error('Cannot run validator on isolated fixtures without source patch');
-    process.exit(99);
-  `], { encoding: 'utf8', cwd: fixtureDir });
-}
-
-describe('validate-examples.js fixture harness (sanity)', () => {
-  it('captures both stdout and stderr from the script', () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'val-examples-'));
-    const result = runValidator(tmp);
-    // The harness above exits with 99 because the script uses hard-coded
-    // paths. That's fine — this test asserts the harness shape, not the
-    // behavior. The real behavioral tests below use the actual repo paths.
-    expect(typeof result.stdout).toBe('string');
-    expect(typeof result.stderr).toBe('string');
-  });
-});
-
-// ─── Behavioral tests: swap the real examples files temporarily ──────────────
 //
-// The validator reads from hardcoded paths. To test invalid fixtures without
-// permanently breaking the repo, we snapshot the real files, write the
-// fixture, run the script, then restore.
-
-const REAL_MD = path.join(REPO, 'examples', 'API_CURL_EXAMPLES.md');
-const REAL_POSTMAN = path.join(REPO, 'examples', 'Stellar-Micro-Donation-API.postman_collection.json');
+// The validator resolves MD_FILE / POSTMAN_FILE from env vars
+// (VALIDATE_MD_FILE / VALIDATE_POSTMAN_FILE) when set, defaulting to the
+// in-repo paths. Tests write their fixtures to a fresh tmp directory, set
+// the env vars, spawn the script, and clean up. This avoids mutating the
+// real examples files (which previously risked repo corruption on a
+// crashed or interrupted test run) and lets multiple tests run in parallel.
 
 function withFixtures(mdOverrides = {}, postmanOverrides = {}, fn) {
-  const mdBackup = fs.readFileSync(REAL_MD, 'utf8');
-  const postmanBackup = fs.readFileSync(REAL_POSTMAN, 'utf8');
-  try {
-    fs.writeFileSync(REAL_MD, buildMarkdown(mdOverrides));
-    fs.writeFileSync(REAL_POSTMAN, JSON.stringify(buildCollection(postmanOverrides), null, 2));
-    return fn();
-  } finally {
-    fs.writeFileSync(REAL_MD, mdBackup);
-    fs.writeFileSync(REAL_POSTMAN, postmanBackup);
-  }
-}
-
-function runValidatorOnRepo() {
-  return spawnSync('node', [SCRIPT], { encoding: 'utf8' });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'val-examples-'));
+  const mdPath = path.join(tmpDir, 'API_CURL_EXAMPLES.md');
+  const postmanPath = path.join(tmpDir, 'postman.json');
+  fs.writeFileSync(mdPath, buildMarkdown(mdOverrides));
+  fs.writeFileSync(postmanPath, JSON.stringify(buildCollection(postmanOverrides), null, 2));
+  const env = {
+    ...process.env,
+    VALIDATE_MD_FILE: mdPath,
+    VALIDATE_POSTMAN_FILE: postmanPath,
+  };
+  const result = spawnSync('node', [SCRIPT], { encoding: 'utf8', env });
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  return result;
 }
 
 describe('validate-examples.js: valid fixtures pass', () => {

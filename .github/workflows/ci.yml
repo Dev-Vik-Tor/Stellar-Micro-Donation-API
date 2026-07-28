@@ -24,6 +24,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run migrate:check
+      # Reject PRs that embed invalid Stellar keys or wrong field names in
+      # the example curl/Postman files. Refs issue #1428.
+      - run: npm run examples:validate
 
   test:
     runs-on: ubuntu-latest

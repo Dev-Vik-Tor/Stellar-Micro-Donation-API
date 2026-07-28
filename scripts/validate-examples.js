@@ -33,8 +33,12 @@ try {
 }
 
 const ROOT = path.resolve(__dirname, '..');
-const MD_FILE = path.join(ROOT, 'examples', 'API_CURL_EXAMPLES.md');
-const POSTMAN_FILE = path.join(ROOT, 'examples', 'Stellar-Micro-Donation-API.postman_collection.json');
+const MD_FILE = process.env.VALIDATE_MD_FILE
+  ? path.resolve(process.env.VALIDATE_MD_FILE)
+  : path.join(ROOT, 'examples', 'API_CURL_EXAMPLES.md');
+const POSTMAN_FILE = process.env.VALIDATE_POSTMAN_FILE
+  ? path.resolve(process.env.VALIDATE_POSTMAN_FILE)
+  : path.join(ROOT, 'examples', 'Stellar-Micro-Donation-API.postman_collection.json');
 
 const failures = [];
 function fail(label, detail) {
@@ -93,7 +97,11 @@ function extractBashExports(markdown) {
   // can't false-flag them. We support both  export NAME="value"  and
   //  NAME="value"  forms; values must be double-quoted.
   for (const rawLine of markdown.split('\n')) {
-    const line = rawLine.trim();
+    let line = rawLine.trim();
+    // Strip inline bash comment after the closing quote, e.g.
+    //   export NAME="value" # used in example 3
+    const hashIdx = line.indexOf(' #');
+    if (hashIdx >= 0) line = line.slice(0, hashIdx).trim();
     let body = line;
     if (body.startsWith('export ')) body = body.slice('export '.length).trim();
     else if (body.startsWith('export\t')) body = body.slice('export\t'.length).trim();

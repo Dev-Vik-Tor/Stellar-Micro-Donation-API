@@ -340,11 +340,13 @@ describe('requireApiKey middleware with signing_required', () => {
   it('accepts a correctly signed GET request', async () => {
     const ts = String(nowSec());
     const { signature } = sign({ secret: signingSecret, method: 'GET', path: '/test', timestamp: ts });
+    const nonce = crypto.randomBytes(16).toString('hex');
     const res = await request(app)
       .get('/test')
       .set('x-api-key', signingKey)
       .set('x-timestamp', ts)
-      .set('x-signature', signature);
+      .set('x-signature', signature)
+      .set('x-nonce', nonce);
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
   });
@@ -353,11 +355,13 @@ describe('requireApiKey middleware with signing_required', () => {
     const body = JSON.stringify({ amount: '10' });
     const ts = String(nowSec());
     const { signature } = sign({ secret: signingSecret, method: 'POST', path: '/test', timestamp: ts, body });
+    const nonce = crypto.randomBytes(16).toString('hex');
     const res = await request(app)
       .post('/test')
       .set('x-api-key', signingKey)
       .set('x-timestamp', ts)
       .set('x-signature', signature)
+      .set('x-nonce', nonce)
       .set('Content-Type', 'application/json')
       .send(body);
     expect(res.status).toBe(200);
