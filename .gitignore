@@ -148,3 +148,8 @@ reports/
 # OS / editor noise
 *.bak
 *.orig
+
+# Container vulnerability scan results (local)
+trivy-results.sarif
+trivy-results.json
+trivy-report.txt

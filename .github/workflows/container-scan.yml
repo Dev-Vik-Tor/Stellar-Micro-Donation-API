@@ -1,0 +1,222 @@
+name: Container Image Vulnerability Scan
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - 'Dockerfile'
+      - 'package*.json'
+      - '.github/workflows/container-scan.yml'
+  pull_request:
+    branches: ["main", "master"]
+    paths:
+      - 'Dockerfile'
+      - 'package*.json'
+      - '.github/workflows/container-scan.yml'
+  schedule:
+    # Run daily at 2 AM UTC to catch newly-disclosed CVEs in unchanged images
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: stellar-micro-donation-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: stellar-micro-donation-api:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          scanners: 'vuln,secret,misconfig'
+          # Load allowlist for accepted/unfixable findings
+          trivyignores: '.trivyignore'
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'container-image'
+
+      - name: Run Trivy with table output for CI artifact
+        uses: aquasecurity/trivy-action@0.28.0
+        if: always()
+        with:
+          image-ref: stellar-micro-donation-api:${{ github.sha }}
+          format: 'table'
+          output: 'trivy-report.txt'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          scanners: 'vuln,secret,misconfig'
+          trivyignores: '.trivyignore'
+
+      - name: Run Trivy with JSON output for parsing
+        uses: aquasecurity/trivy-action@0.28.0
+        if: always()
+        with:
+          image-ref: stellar-micro-donation-api:${{ github.sha }}
+          format: 'json'
+          output: 'trivy-results.json'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          scanners: 'vuln,secret,misconfig'
+          trivyignores: '.trivyignore'
+
+      - name: Upload Trivy scan reports as artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-scan-reports-${{ github.sha }}
+          path: |
+            trivy-report.txt
+            trivy-results.json
+            trivy-results.sarif
+          retention-days: 90
+
+      - name: Check Trivy results and fail on critical/high vulnerabilities
+        id: trivy_check
+        if: always()
+        run: |
+          # Parse JSON output to count vulnerabilities
+          if [ -f trivy-results.json ]; then
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' trivy-results.json)
+            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' trivy-results.json)
+            
+            echo "critical_count=$CRITICAL" >> $GITHUB_OUTPUT
+            echo "high_count=$HIGH" >> $GITHUB_OUTPUT
+            
+            echo "### 🔍 Container Image Vulnerability Scan Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **Critical vulnerabilities:** $CRITICAL" >> $GITHUB_STEP_SUMMARY
+            echo "- **High vulnerabilities:** $HIGH" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+              echo "**Status:** ❌ Failed - Critical or High vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Please review the scan report artifact for details." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "To accept specific vulnerabilities (with justification), add them to \`.trivyignore\`." >> $GITHUB_STEP_SUMMARY
+              exit 1
+            else
+              echo "**Status:** ✅ Passed - No critical or high vulnerabilities found" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "❌ Trivy results file not found" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      - name: Post PR comment with scan results
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request' && always()
+        continue-on-error: true
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            let criticalCount = 0;
+            let highCount = 0;
+            let mediumCount = 0;
+            let lowCount = 0;
+            
+            try {
+              const results = JSON.parse(fs.readFileSync('trivy-results.json', 'utf8'));
+              
+              results.Results?.forEach(result => {
+                result.Vulnerabilities?.forEach(vuln => {
+                  if (vuln.Severity === 'CRITICAL') criticalCount++;
+                  else if (vuln.Severity === 'HIGH') highCount++;
+                  else if (vuln.Severity === 'MEDIUM') mediumCount++;
+                  else if (vuln.Severity === 'LOW') lowCount++;
+                });
+              });
+            } catch (error) {
+              console.error('Error parsing Trivy results:', error);
+            }
+            
+            const status = (criticalCount > 0 || highCount > 0) ? '❌ Failed' : '✅ Passed';
+            const emoji = (criticalCount > 0 || highCount > 0) ? '🚨' : '✅';
+            
+            const body = `## ${emoji} Container Image Vulnerability Scan Results
+            
+            **Status:** ${status}
+            
+            | Severity | Count |
+            |----------|-------|
+            | 🔴 Critical | ${criticalCount} |
+            | 🟠 High | ${highCount} |
+            | 🟡 Medium | ${mediumCount} |
+            | 🔵 Low | ${lowCount} |
+            
+            ${criticalCount > 0 || highCount > 0 ? `
+            ### ⚠️ Action Required
+            
+            Critical or high severity vulnerabilities were found in the container image.
+            
+            **Next steps:**
+            1. Review the detailed scan report in the CI artifacts
+            2. Update base image or dependencies to patched versions
+            3. If vulnerabilities are unfixable or accepted risk, document in \`.trivyignore\` with justification and expiry date
+            
+            **View detailed report:**
+            - Check the "Artifacts" section in the workflow run
+            - Review findings in the "Security" tab under "Code scanning alerts"
+            ` : `
+            ### ✅ All Clear
+            
+            No critical or high severity vulnerabilities found in the container image.
+            `}
+            
+            <details>
+            <summary>About Container Scanning</summary>
+            
+            This scan checks the Docker image for:
+            - Known vulnerabilities (CVEs) in OS packages
+            - Known vulnerabilities in application dependencies
+            - Exposed secrets in the image layers
+            - Container misconfigurations
+            
+            **Allowlist process:**
+            If a vulnerability cannot be fixed or is accepted as low risk:
+            1. Add it to \`.trivyignore\` with CVE ID
+            2. Add a comment explaining why it's accepted
+            3. Set an expiry date for review
+            
+            </details>`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

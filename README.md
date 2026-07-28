@@ -1,5 +1,9 @@
 # Stellar Micro-Donation API
 
+[![CI](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/workflows/CI/badge.svg)](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/actions/workflows/ci.yml)
+[![Security Scan](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/workflows/Security%20Scan/badge.svg)](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/actions/workflows/security-scan.yml)
+[![Container Security](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/workflows/Container%20Image%20Vulnerability%20Scan/badge.svg)](https://github.com/Manuel1234477/Stellar-Micro-Donation-API/actions/workflows/container-scan.yml)
+
 A Node.js/Express API for managing micro-donations on the Stellar blockchain network. Supports one-time donations, recurring donation schedules, wallet management, and donation analytics.
 
 ## 📋 Table of Contents
@@ -722,6 +726,7 @@ The scheduler runs automatically when the server starts and checks for due donat
 - **[API Flow Diagram](API%20flow%20diagram.txt)** - API request flow
 - **[Mock Stellar Guide](MOCK_STELLAR_GUIDE.md)** - Using mock Stellar service
 - **[Kubernetes Probes](docs/KUBERNETES_PROBES.md)** - Liveness and readiness probe configuration
+- **[Container Security](docs/CONTAINER_SECURITY.md)** - Container image vulnerability scanning and remediation
 
 ### Development & Deployment
 - **[Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md)** - Production deployment verification
