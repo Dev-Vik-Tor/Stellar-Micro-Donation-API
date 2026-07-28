@@ -36,7 +36,39 @@ class TranslationDoc {
 
   static async find(filter = {}, projection) {
     await initTable();
-    const rows = await Database.all(`SELECT * FROM translations`);
+
+    const allowedColumns = ['key', 'translations', 'updated_at'];
+    let selectClause = '*';
+
+    if (projection) {
+      let fields = [];
+      if (Array.isArray(projection)) {
+        fields = projection.filter(field => allowedColumns.includes(field));
+      } else if (typeof projection === 'object' && projection !== null) {
+        fields = Object.keys(projection).filter(
+          field => allowedColumns.includes(field) && projection[field] !== 0
+        );
+      } else if (typeof projection === 'string' && allowedColumns.includes(projection)) {
+        fields = [projection];
+      }
+
+      if (fields.length > 0) {
+        selectClause = fields.map(field => `"${field}"`).join(', ');
+      }
+    }
+
+    const filterEntries = Object.entries(filter || {}).filter(([, value]) => value !== undefined);
+    const whereClauses = [];
+    const params = [];
+
+    for (const [field, value] of filterEntries) {
+      if (!allowedColumns.includes(field)) continue;
+      whereClauses.push(`"${field}" = ?`);
+      params.push(value);
+    }
+
+    const sql = `SELECT ${selectClause} FROM translations${whereClauses.length ? ` WHERE ${whereClauses.join(' AND ')}` : ''}`;
+    const rows = await Database.all(sql, params);
     return (rows || []).map(r => new TranslationDoc(r));
   }
 
