@@ -340,11 +340,13 @@ describe('requireApiKey middleware with signing_required', () => {
   it('accepts a correctly signed GET request', async () => {
     const ts = String(nowSec());
     const { signature } = sign({ secret: signingSecret, method: 'GET', path: '/test', timestamp: ts });
+    const nonce = crypto.randomBytes(16).toString('hex');
     const res = await request(app)
       .get('/test')
       .set('x-api-key', signingKey)
       .set('x-timestamp', ts)
-      .set('x-signature', signature);
+      .set('x-signature', signature)
+      .set('x-nonce', nonce);
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
   });
@@ -353,11 +355,13 @@ describe('requireApiKey middleware with signing_required', () => {
     const body = JSON.stringify({ amount: '10' });
     const ts = String(nowSec());
     const { signature } = sign({ secret: signingSecret, method: 'POST', path: '/test', timestamp: ts, body });
+    const nonce = crypto.randomBytes(16).toString('hex');
     const res = await request(app)
       .post('/test')
       .set('x-api-key', signingKey)
       .set('x-timestamp', ts)
       .set('x-signature', signature)
+      .set('x-nonce', nonce)
       .set('Content-Type', 'application/json')
       .send(body);
     expect(res.status).toBe(200);
@@ -465,5 +469,221 @@ describe('SignedApiClient (examples/signedClient.js)', () => {
     const s1 = client._sign('GET', '/donations', ts, '');
     const s2 = client._sign('GET', '/wallets', ts, '');
     expect(s1).not.toBe(s2);
+  });
+});
+
+// ─── SignedApiClient — real HTTP request() integration ────────────────────────
+//
+// These tests inject a mock fetch and exercise SignedApiClient end-to-end:
+// they verify that the X-API-Key / X-Timestamp / X-Signature / X-Nonce
+// headers are attached, the signature is valid for the canonical string the
+// server would see, the body is JSON-serialized correctly, query params are
+// appended, and the response is parsed as JSON.
+describe('SignedApiClient (request() HTTP integration)', () => {
+  const SignedApiClient = require('../../examples/signedClient');
+
+  // Build a fake fetch that records every call and returns a configurable
+  // response. Returns { fetch, getCalls } where getCalls() is an array of
+  // { url, opts } pairs in invocation order.
+  function makeMockFetch(responseFactory) {
+    const calls = [];
+    const mockFetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return {
+        status: 200,
+        ok: true,
+        url,
+        headers: {
+          get(name) { return name.toLowerCase() === 'content-type' ? 'application/json' : null; },
+          forEach(cb) { cb('application/json', 'content-type'); },
+        },
+        json: async () => responseFactory(calls),
+        text: async () => JSON.stringify(responseFactory(calls)),
+      };
+    };
+    return { fetch: mockFetch, getCalls: () => calls };
+  }
+
+  // Convenience: assert the first mock call has the expected property. Helps
+  // avoid subtle bugs where `getCalls[0]` accesses a character index on the
+  // function rather than the first invocation.
+  function firstCall(getCalls) {
+    const arr = getCalls();
+    expect(arr.length).toBeGreaterThan(0);
+    return arr[0];
+  }
+
+  it('sends GET with signed headers and a signature the server can verify', async () => {
+    const secret = makeSecret();
+    const apiKey = 'k_test';
+    const { fetch: mockFetch, getCalls } = makeMockFetch(() => ({ ok: true }));
+
+    const client = new SignedApiClient({
+      baseUrl: 'http://localhost:3000/api/v1',
+      apiKey,
+      apiSecret: secret,
+      fetch: mockFetch,
+    });
+    await client.get('/donations/recent?limit=5');
+
+    const calls = getCalls();
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+
+    // The full URL should include the mount prefix and the literal query string.
+    expect(call.url).toBe('http://localhost:3000/api/v1/donations/recent?limit=5');
+
+    // All 4 required signing headers must be attached.
+    expect(call.opts.method).toBe('GET');
+    expect(call.opts.headers['X-API-Key']).toBe(apiKey);
+    expect(call.opts.headers['X-Timestamp']).toMatch(/^\d{10}$/);
+    expect(call.opts.headers['X-Signature']).toMatch(/^[0-9a-f]{64}$/);
+    expect(call.opts.headers['X-Nonce']).toBeDefined();
+    expect(typeof call.opts.headers['X-Nonce']).toBe('string');
+    expect(call.opts.headers['X-Nonce'].length).toBeGreaterThanOrEqual(8);
+
+    // Signature must be valid for what the server would see as req.originalUrl.
+    const result = verify({
+      secret,
+      method: 'GET',
+      path: '/api/v1/donations/recent?limit=5',
+      timestamp: call.opts.headers['X-Timestamp'],
+      signature: call.opts.headers['X-Signature'],
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('JSON-serializes a POST body and signs the exact raw bytes', async () => {
+    const secret = makeSecret();
+    const { fetch: mockFetch, getCalls } = makeMockFetch(() => ({ success: true }));
+    const client = new SignedApiClient({
+      baseUrl: 'http://localhost:3000/api/v1',
+      apiKey: 'k',
+      apiSecret: secret,
+      fetch: mockFetch,
+    });
+
+    const body = { recipientId: 'Gr…', senderId: 'Ga…', amount: '10' };
+    await client.post('/donations', body);
+
+    const call = getCalls()[0];
+    expect(call.opts.method).toBe('POST');
+    expect(call.opts.headers['Content-Type']).toBe('application/json');
+    expect(call.opts.body).toBe(JSON.stringify(body));
+
+    // The signature must be computed over the exact raw body the server receives.
+    const result = verify({
+      secret,
+      method: 'POST',
+      path: '/api/v1/donations',
+      timestamp: call.opts.headers['X-Timestamp'],
+      signature: call.opts.headers['X-Signature'],
+      body: JSON.stringify(body),
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('appends query parameters via opts.query and signs the resulting path+query', async () => {
+    const secret = makeSecret();
+    const { fetch: mockFetch, getCalls } = makeMockFetch(() => []);
+    const client = new SignedApiClient({
+      baseUrl: 'http://localhost:3000/api/v1',
+      apiKey: 'k',
+      apiSecret: secret,
+      fetch: mockFetch,
+    });
+    await client.get('/donations/recent', { query: { limit: 10, type: 'gift' } });
+
+    const call = getCalls()[0];
+    // URL.searchParams sorts by insertion order; here we inserted limit first.
+    expect(call.url).toContain('http://localhost:3000/api/v1/donations/recent');
+    expect(call.url).toContain('limit=10');
+    expect(call.url).toContain('type=gift');
+
+    const result = verify({
+      secret,
+      method: 'GET',
+      path: call.url.replace('http://localhost:3000', ''),
+      timestamp: call.opts.headers['X-Timestamp'],
+      signature: call.opts.headers['X-Signature'],
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('returns parsed JSON data and a status flag', async () => {
+    const payload = { success: true, data: { id: 1 } };
+    const { fetch: mockFetch } = makeMockFetch(() => payload);
+    const client = new SignedApiClient({
+      baseUrl: 'http://localhost:3000/api/v1',
+      apiKey: 'k',
+      apiSecret: makeSecret(),
+      fetch: mockFetch,
+    });
+    const res = await client.get('/wallets');
+    expect(res.status).toBe(200);
+    expect(res.ok).toBe(true);
+    expect(res.data).toEqual(payload);
+  });
+
+  it('rejects unsupported HTTP methods', async () => {
+    const { fetch: mockFetch, getCalls } = makeMockFetch(() => ({}));
+    const client = new SignedApiClient({
+      baseUrl: 'http://localhost:3000/api/v1',
+      apiKey: 'k',
+      apiSecret: makeSecret(),
+      fetch: mockFetch,
+    });
+    await expect(client.request('FOO', '/x')).rejects.toThrow(/unsupported/i);
+    expect(getCalls()).toHaveLength(0);
+  });
+
+  it('supports the convenience wrappers get/post/put/patch/delete/head', async () => {
+    const { fetch: mockFetch, getCalls } = makeMockFetch(() => ({}));
+    const client = new SignedApiClient({
+      baseUrl: 'http://localhost:3000/api/v1',
+      apiKey: 'k',
+      apiSecret: makeSecret(),
+      fetch: mockFetch,
+    });
+    await client.get('/a');
+    await client.post('/a', { x: 1 });
+    await client.put('/a', { x: 2 });
+    await client.patch('/a', { x: 3 });
+    await client.delete('/a');
+    await client.head('/a');
+    expect(getCalls().map((c) => c.opts.method)).toEqual(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
+  });
+
+  it('generates a fresh nonce for each request (replay protection)', async () => {
+    const { fetch: mockFetch, getCalls } = makeMockFetch(() => ({}));
+    const client = new SignedApiClient({
+      baseUrl: 'http://localhost:3000/api/v1',
+      apiKey: 'k',
+      apiSecret: makeSecret(),
+      fetch: mockFetch,
+    });
+    await client.get('/a');
+    await client.get('/a');
+    const [a, b] = getCalls().map((c) => c.opts.headers['X-Nonce']);
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a).not.toBe(b);
+  });
+
+  it('allows custom defaultHeaders and a custom nonce generator (for deterministic tests)', async () => {
+    let counter = 0;
+    const { fetch: mockFetch, getCalls } = makeMockFetch(() => ({}));
+    const client = new SignedApiClient({
+      baseUrl: 'http://localhost:3000/api/v1',
+      apiKey: 'k',
+      apiSecret: makeSecret(),
+      fetch: mockFetch,
+      defaultHeaders: { 'X-Demo-Header': 'demo' },
+      generateNonce: () => `nonce-${++counter}`,
+    });
+    await client.get('/a');
+    const call = getCalls()[0];
+    expect(call.opts.headers['X-Demo-Header']).toBe('demo');
+    expect(call.opts.headers['X-Nonce']).toBe('nonce-1');
   });
 });
