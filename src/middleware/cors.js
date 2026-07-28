@@ -53,17 +53,12 @@ async function loadDbOrigins() {
 
   try {
     const Database = require('../utils/database');
-    // Load from cors_origins (legacy) and cors_rules (active only)
-    const [originsRows, rulesRows] = await Promise.all([
-      Database.query('SELECT origin FROM cors_origins ORDER BY id ASC', []).catch(() => []),
-      Database.query('SELECT origin FROM cors_rules WHERE active = 1 ORDER BY id ASC', []).catch(() => []),
-    ]);
-    const origins = [
-      ...originsRows.map(r => r.origin),
-      ...rulesRows.map(r => r.origin),
-    ];
-    // Deduplicate
-    const unique = [...new Set(origins)];
+    // Load active origins from cors_rules (canonical allowlist table)
+    const rulesRows = await Database.query(
+      'SELECT origin FROM cors_rules WHERE active = 1 ORDER BY id ASC',
+      []
+    ).catch(() => []);
+    const unique = [...new Set(rulesRows.map(r => r.origin))];
     _cache.origins = unique;
     _cache.expiresAt = now + _cache.TTL_MS;
     return unique;
