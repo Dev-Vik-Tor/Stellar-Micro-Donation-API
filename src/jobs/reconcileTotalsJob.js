@@ -10,13 +10,21 @@
 
 const DonationTotalsRepository = require('../services/DonationTotalsRepository');
 const log = require('../utils/log');
+const leaderElection = require('../utils/leaderElection');
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const LOCK_NAME = 'reconcile_totals_job';
 
 let _timer = null;
 const _repo = new DonationTotalsRepository();
 
 async function runOnce() {
+  const isLeader = await leaderElection.acquireLease(LOCK_NAME, DEFAULT_INTERVAL_MS * 2);
+  if (!isLeader) {
+    log.debug('RECONCILE_TOTALS_JOB', 'Skipping reconciliation tick — lease held by another instance');
+    return;
+  }
+
   try {
     const result = await _repo.reconcile();
     log.info('RECONCILE_TOTALS_JOB', 'Reconciliation complete', result);
