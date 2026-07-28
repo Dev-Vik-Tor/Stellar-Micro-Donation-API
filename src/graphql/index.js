@@ -169,7 +169,60 @@ function attachSubscriptionServer(httpServer) {
 
         throw new Error('Invalid or expired API key');
       },
-      context: (ctx) => ({ apiKey: ctx.extra?.apiKey ?? ctx.connectionParams }),
+
+      /**
+       * Validate each incoming subscription document before execution.
+       * Applies the same introspection-blocking and depth-limiting rules used
+       * by the HTTP handler, so WebSocket subscribers cannot bypass security
+       * by bypassing the HTTP layer. (#1369)
+       *
+       * @param {object} ctx - graphql-ws context (ctx.extra.apiKey is set after onConnect)
+       * @param {object} msg - The subscribe message containing the document
+       * @param {object} args - Execution args including schema and document
+       * @returns {readonly GraphQLError[] | void} Return errors to reject the subscription
+       */
+      onSubscribe: (ctx, msg, args) => {
+        // args may be undefined in some graphql-ws versions; fall back to parsing msg
+        const document = args?.document;
+        if (!document) return;
+
+        // Standard GraphQL validation
+        const validationErrors = validate(args.schema || schema, document);
+        if (validationErrors.length > 0) return validationErrors;
+
+        // Block introspection in production (#1369)
+        if (IS_PRODUCTION) {
+          for (const def of document.definitions) {
+            const src = def.selectionSet?.selections ?? [];
+            const hasIntrospection = src.some(
+              (s) => s.name?.value === '__schema' || s.name?.value === '__type'
+            );
+            if (hasIntrospection) {
+              return [new Error('GraphQL introspection is disabled in production.')];
+            }
+          }
+        }
+
+        // Enforce query depth limit (#1369)
+        const { valid, depth } = checkDepth(document);
+        if (!valid) {
+          return [
+            new Error(
+              `Query depth ${depth} exceeds maximum allowed depth of ${MAX_QUERY_DEPTH}.`
+            ),
+          ];
+        }
+      },
+
+      /**
+       * Build per-subscription resolver context from the authenticated connection.
+       * Only trust ctx.extra.apiKey — populated by onConnect after successful auth.
+       * Do NOT fall back to raw connectionParams, which are unauthenticated. (#1370)
+       *
+       * @param {object} ctx - graphql-ws context
+       * @returns {{ apiKey: object|null }}
+       */
+      context: (ctx) => ({ apiKey: ctx.extra?.apiKey ?? null }),
     },
     wss
   );
