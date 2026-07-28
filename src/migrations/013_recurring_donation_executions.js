@@ -7,7 +7,7 @@
  * owners and admins can audit past runs (success/failure, tx hash, error).
  */
 
-exports.name = '011_recurring_donation_executions';
+exports.name = '013_recurring_donation_executions';
 
 exports.up = async (db) => {
   await db.run(`

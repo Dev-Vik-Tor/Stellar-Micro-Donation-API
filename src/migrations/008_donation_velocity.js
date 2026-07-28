@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '006_donation_velocity';
+exports.name = '008_donation_velocity';
 
 exports.up = async (db) => {
   await db.run(`

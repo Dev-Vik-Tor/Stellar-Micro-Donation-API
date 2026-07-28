@@ -6,7 +6,7 @@
  * Adds retryCount and durationMs fields to track retry attempts and execution time.
  */
 
-exports.name = '013_add_execution_metadata';
+exports.name = '017_add_execution_metadata';
 
 exports.up = async (db) => {
   // Add retryCount column (default 0)

@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '002_api_keys';
+exports.name = '003_api_keys';
 
 exports.up = async (db) => {
   await db.run(`

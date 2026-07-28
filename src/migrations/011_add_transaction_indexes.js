@@ -9,7 +9,7 @@
  * - Composite index on (senderId, timestamp) for time-range donor queries
  */
 
-exports.name = '009_add_transaction_indexes';
+exports.name = '011_add_transaction_indexes';
 
 exports.up = async (db) => {
   await db.run(`

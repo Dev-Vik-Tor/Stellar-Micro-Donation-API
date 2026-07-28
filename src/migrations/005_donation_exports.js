@@ -40,4 +40,4 @@ async function down() {
   console.log('✓ Migration 004: donation_exports table dropped');
 }
 
-module.exports = { name: '004_donation_exports', up, down };
+module.exports = { name: '005_donation_exports', up, down };
