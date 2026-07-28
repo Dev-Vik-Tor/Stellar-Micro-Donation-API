@@ -84,6 +84,9 @@ class FeeBumpService {
     let feeStroops = newFee;
     const feeSource = feeSourceSecret || this.feeSourceSecret;
 
+    // Increment attempt counter before attempting fee bump so failed attempts count toward the limit
+    const attemptCount = (tx.feeBumpCount || 0) + 1;
+
     try {
       if (feeStroops === null || feeStroops === undefined) {
         const feeEstimate = await this.stellarService.estimateFee(1);
@@ -108,10 +111,9 @@ class FeeBumpService {
       );
 
       const now = new Date().toISOString();
-      const newCount = (tx.feeBumpCount || 0) + 1;
 
       Transaction.updateFeeBumpData(transactionId, {
-        feeBumpCount: newCount,
+        feeBumpCount: attemptCount,
         currentFee: feeStroops,
         lastFeeBumpAt: now,
         envelopeXdr: result.envelopeXdr,
@@ -128,7 +130,7 @@ class FeeBumpService {
           transactionId,
           originalFee: tx.currentFee || tx.originalFee,
           newFee: feeStroops,
-          feeBumpCount: newCount,
+          feeBumpCount: attemptCount,
           stellarHash: result.hash,
         },
       }).catch(() => {});
@@ -137,7 +139,7 @@ class FeeBumpService {
         transactionId,
         originalFee: tx.currentFee || tx.originalFee,
         newFee: feeStroops,
-        attempt: newCount,
+        attempt: attemptCount,
       });
 
       return {
@@ -145,10 +147,19 @@ class FeeBumpService {
         transactionId,
         originalFee: tx.currentFee || tx.originalFee,
         newFee: feeStroops,
-        feeBumpCount: newCount,
+        feeBumpCount: attemptCount,
         hash: result.hash,
       };
     } catch (error) {
+      // Update fee bump count even on failure so failed attempts count toward the limit
+      Transaction.updateFeeBumpData(transactionId, {
+        feeBumpCount: attemptCount,
+        // Keep current fee unchanged on failure
+        lastFeeBumpAt: new Date().toISOString(),
+      }).catch(() => {
+        // Silently ignore DB update failures for failed fee bumps
+      });
+
       // Don't re-throw our own validation errors
       if (error.errorCode && error.errorCode.startsWith && error.errorCode.startsWith('FEE_BUMP_')) {
         throw error;
@@ -162,12 +173,14 @@ class FeeBumpService {
         details: {
           transactionId,
           attemptedFee: feeStroops,
+          feeBumpCount: attemptCount,
           error: error.message,
         },
       }).catch(() => {});
 
       log.error('FEE_BUMP', 'Fee bump failed', {
         transactionId,
+        attempt: attemptCount,
         error: error.message,
       });
 

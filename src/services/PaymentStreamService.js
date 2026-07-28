@@ -150,10 +150,22 @@ class PaymentStreamService {
           log.error('PAYMENT_STREAM', 'Error handling payment', { publicKey, error: err.message });
         });
       },
-      { cursor: liveOptions.cursor || 'now' }
+      { 
+        cursor: liveOptions.cursor || 'now',
+        onError: (error) => {
+          log.warn('PAYMENT_STREAM', 'Stream error, scheduling reconnect', { 
+            publicKey, 
+            error: error.message 
+          });
+          // Schedule reconnection with current options and cursor
+          const entry = this.activeStreams.get(publicKey);
+          const currentAttempt = entry && entry.reconnectAttempt !== undefined ? entry.reconnectAttempt : 0;
+          this._reconnect(publicKey, liveOptions, currentAttempt + 1);
+        }
+      }
     );
 
-    this.activeStreams.set(publicKey, { stop, reconnectTimer: null, options: liveOptions });
+    this.activeStreams.set(publicKey, { stop, reconnectTimer: null, reconnectAttempt: 0, options: liveOptions });
     this._persistStream(publicKey, liveOptions);
   }
 
@@ -239,6 +251,14 @@ class PaymentStreamService {
    * @param {number} [attempt=0]
    */
   _reconnect(publicKey, options, attempt = 0) {
+    const entry = this.activeStreams.get(publicKey);
+    
+    // Clear any existing reconnect timer to prevent multiple reconnections
+    if (entry && entry.reconnectTimer) {
+      clearTimeout(entry.reconnectTimer);
+      entry.reconnectTimer = null;
+    }
+
     if (attempt >= MAX_RECONNECT_ATTEMPTS) {
       log.error('PAYMENT_STREAM', 'Max reconnect attempts reached, giving up', { publicKey, attempt });
       this.activeStreams.delete(publicKey);
@@ -252,15 +272,16 @@ class PaymentStreamService {
     const timer = setTimeout(() => {
       log.info('PAYMENT_STREAM', 'Reconnecting stream', { publicKey, attempt });
       // Use the live options stored in the entry (has latest cursor)
-      const entry = this.activeStreams.get(publicKey);
-      this.subscribe(publicKey, entry ? entry.options : options);
+      const currentEntry = this.activeStreams.get(publicKey);
+      this.subscribe(publicKey, currentEntry ? currentEntry.options : options);
     }, delay);
 
-    const entry = this.activeStreams.get(publicKey);
     if (entry) {
       entry.reconnectTimer = timer;
+      // Track the attempt count in the entry
+      entry.reconnectAttempt = attempt;
     } else {
-      this.activeStreams.set(publicKey, { stop: null, reconnectTimer: timer, options });
+      this.activeStreams.set(publicKey, { stop: null, reconnectTimer: timer, reconnectAttempt: attempt, options });
     }
   }
 

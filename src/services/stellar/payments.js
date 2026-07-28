@@ -109,8 +109,14 @@ class StellarPayments {
           destination: destinationPublic,
           asset: paymentAsset,
           amount: amount.toString(),
-        }))
-        .setTimeout(30);
+        }));
+
+      // Only set default timeout when no explicit time bounds are requested
+      // (validAfter/validBefore are set as strings in timebounds above)
+      // We check if maxTime is non-zero (has explicit expiration)
+      if (!validBefore || validBefore === '0' || validBefore === 0) {
+        transaction.setTimeout(30);
+      }
 
       if (memo) {
         const MemoValidator = require('../../utils/memoValidator');
@@ -193,9 +199,19 @@ class StellarPayments {
       }
 
       const bestRecord = [...records].sort((left, right) => {
-        const leftDest = parseFloat(left.destination_amount || left.destination_amount_max || '0');
-        const rightDest = parseFloat(right.destination_amount || right.destination_amount_max || '0');
-        return rightDest - leftDest;
+        if (destAmount) {
+          // For strict-receive paths (fixed destination amount), sort by source_amount ascending
+          // to find the cheapest route for the sender
+          const leftSource = parseFloat(left.source_amount || '0');
+          const rightSource = parseFloat(right.source_amount || '0');
+          return leftSource - rightSource;
+        } else {
+          // For strict-send paths (fixed source amount), sort by destination_amount descending
+          // to find the best return for the sender
+          const leftDest = parseFloat(left.destination_amount || left.destination_amount_max || '0');
+          const rightDest = parseFloat(right.destination_amount || right.destination_amount_max || '0');
+          return rightDest - leftDest;
+        }
       })[0];
 
       const normalizedPath = (bestRecord.path || []).map(normalizeHorizonAsset);
@@ -337,7 +353,7 @@ class StellarPayments {
     }, 'getTransactionHistory');
   }
 
-  streamTransactions(publicKey, onTransaction, { cursor = 'now' } = {}) {
+  streamTransactions(publicKey, onTransaction, { cursor = 'now', onError = null } = {}) {
     const streamTimeout = this.service.timeouts.stream;
     let lastMessageTime = Date.now();
     let timeoutTimer = null;
@@ -379,6 +395,10 @@ class StellarPayments {
             error: error.message,
             publicKey
           });
+          // If an onError callback was provided, call it to allow for reconnection
+          if (onError && typeof onError === 'function') {
+            onError(error);
+          }
         },
       });
 
