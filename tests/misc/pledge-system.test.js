@@ -73,6 +73,18 @@ describe('Pledge model', () => {
     expect(Database.run).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO pledges'), expect.any(Array));
   });
 
+  it('stores pledge amounts as stroops when creating a pledge', async () => {
+    const data = { campaign_id: 1, donor_wallet_id: 'GA1', amount: '0.0001000', expires_at: '2099-01-01' };
+    Database.get.mockResolvedValueOnce({ id: 'uuid-1', ...data, amount: 1000n, status: 'pending' });
+
+    await Pledge.create(data);
+
+    expect(Database.run).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO pledges'),
+      expect.arrayContaining([expect.any(String), 1, 'GA1', 1000n, '2099-01-01'])
+    );
+  });
+
   it('listByCampaign returns pledges for a campaign', async () => {
     _store.pledges = [
       { id: 'a', campaign_id: 1, status: 'pending' },

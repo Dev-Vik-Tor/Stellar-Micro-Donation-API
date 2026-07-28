@@ -6,13 +6,14 @@
 
 const { v4: uuidv4 } = require('uuid');
 const Database = require('../utils/database');
+const { toStroops } = require('../utils/money');
 
 const TABLE = `
   CREATE TABLE IF NOT EXISTS pledges (
     id              TEXT PRIMARY KEY,
     campaign_id     INTEGER NOT NULL,
     donor_wallet_id TEXT NOT NULL,
-    amount          REAL NOT NULL,
+    amount          INTEGER NOT NULL,
     status          TEXT NOT NULL DEFAULT 'pending'
                       CHECK(status IN ('pending','fulfilled','expired','cancelled')),
     expires_at      DATETIME NOT NULL,
@@ -34,10 +35,11 @@ async function initTable() {
 
 async function create({ campaign_id, donor_wallet_id, amount, expires_at }) {
   const id = uuidv4();
+  const amountStroops = toStroops(amount);
   await Database.run(
     `INSERT INTO pledges (id, campaign_id, donor_wallet_id, amount, expires_at)
      VALUES (?, ?, ?, ?, ?)`,
-    [id, campaign_id, donor_wallet_id, amount, expires_at]
+    [id, campaign_id, donor_wallet_id, amountStroops, expires_at]
   );
   return Database.get(`SELECT * FROM pledges WHERE id = ?`, [id]);
 }
