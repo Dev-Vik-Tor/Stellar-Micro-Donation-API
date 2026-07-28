@@ -12,6 +12,63 @@ const Database = require('../utils/database');
 const Pledge = require('../models/Pledge');
 const WebhookService = require('./WebhookService');
 const log = require('../utils/log');
+const { getStellarService } = require('../config/stellar');
+
+/**
+ * Fulfills a single pledge by submitting an on-chain Stellar payment transaction
+ * before updating status to 'fulfilled' in the database and delivering the webhook.
+ *
+ * @param {Object|string} pledgeOrId
+ * @returns {Promise<{success: boolean, pledge: Object}>}
+ */
+async function fulfillSinglePledge(pledgeOrId) {
+  const pledge = typeof pledgeOrId === 'string' ? await Pledge.findById(pledgeOrId) : pledgeOrId;
+  if (!pledge || pledge.status !== 'pending') {
+    return { success: false, pledge };
+  }
+
+  const campaign = await Database.get(
+    `SELECT id, created_by FROM campaigns WHERE id = ?`,
+    [pledge.campaign_id]
+  );
+  const recipient = campaign ? await Database.get(`SELECT publicKey FROM users WHERE id = ?`, [campaign.created_by]) : null;
+  const donor = await Database.get(
+    `SELECT publicKey, encryptedSecret FROM users WHERE id = ? OR publicKey = ?`,
+    [pledge.donor_wallet_id, pledge.donor_wallet_id]
+  );
+
+  const recipientPublic = recipient ? recipient.publicKey : (pledge.recipient_public_key || null);
+  const donorSecret = donor ? donor.encryptedSecret : (pledge.donor_secret || null);
+
+  const stellarSvc = getStellarService();
+  if (donorSecret && recipientPublic && stellarSvc) {
+    if (typeof stellarSvc.sendPayment === 'function') {
+      await stellarSvc.sendPayment(donorSecret, recipientPublic, pledge.amount, `Pledge fulfillment ${pledge.id}`);
+    } else if (typeof stellarSvc.sendDonation === 'function') {
+      await stellarSvc.sendDonation({
+        sourceSecret: donorSecret,
+        destinationPublic: recipientPublic,
+        amount: pledge.amount,
+        memo: `Pledge fulfillment ${pledge.id}`,
+      });
+    }
+  }
+
+  await Database.run(
+    `UPDATE pledges SET status = 'fulfilled' WHERE id = ? AND status = 'pending'`,
+    [pledge.id]
+  );
+
+  const updated = await Pledge.findById(pledge.id);
+  try {
+    await WebhookService.deliver('pledge.fulfilled', { pledge: updated });
+    await Pledge.markWebhookSent(updated.id);
+  } catch (error) {
+    log.error('PLEDGE', `Failed to deliver webhook for pledge ${updated.id}: ${error.message}`);
+    // Don't mark as sent if delivery failed — checkAndFulfill retries it later.
+  }
+  return { success: true, pledge: updated };
+}
 
 /**
  * Called after any donation is recorded against a campaign.
@@ -30,17 +87,20 @@ async function checkAndFulfill(campaignId) {
     return { fulfilled: 0 };
   }
 
-  // Atomic update — only rows still 'pending' are touched
-  await Database.run(
-    `UPDATE pledges SET status = 'fulfilled'
-     WHERE campaign_id = ? AND status = 'pending'`,
+  const pendingPledges = await Database.query(
+    `SELECT * FROM pledges WHERE campaign_id = ? AND status = 'pending'`,
     [campaignId]
   );
 
-  // Get only newly fulfilled pledges (those without webhook_sent_at)
-  const newlyFulfilled = await Pledge.getNewlyFulfilledPledges(campaignId);
+  let count = 0;
+  for (const pledge of pendingPledges) {
+    const res = await fulfillSinglePledge(pledge);
+    if (res.success) count++;
+  }
 
-  // Send webhooks and mark them as sent
+  // Retry webhook delivery for any previously fulfilled pledges whose webhook
+  // delivery failed earlier (still no webhook_sent_at).
+  const newlyFulfilled = await Pledge.getNewlyFulfilledPledges(campaignId);
   for (const pledge of newlyFulfilled) {
     try {
       await WebhookService.deliver('pledge.fulfilled', { pledge });
@@ -51,8 +111,8 @@ async function checkAndFulfill(campaignId) {
     }
   }
 
-  log.info('PLEDGE', `Fulfilled ${newlyFulfilled.length} pledges for campaign ${campaignId}`);
-  return { fulfilled: newlyFulfilled.length };
+  log.info('PLEDGE', `Fulfilled ${count} pledges for campaign ${campaignId}`);
+  return { fulfilled: count };
 }
 
 /**
@@ -86,4 +146,4 @@ async function expireOverdue(now = new Date().toISOString()) {
   return { expired: changed };
 }
 
-module.exports = { checkAndFulfill, expireOverdue };
+module.exports = { checkAndFulfill, expireOverdue, fulfillSinglePledge };

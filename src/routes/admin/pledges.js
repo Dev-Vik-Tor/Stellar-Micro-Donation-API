@@ -104,23 +104,20 @@ router.patch(
         });
       }
 
-      // Trigger campaign-level fulfillment (atomically fulfills all pending pledges
-      // for the campaign if the goal is met, or fulfills this pledge individually).
+      // Trigger campaign-level fulfillment if campaign goal is met, or fulfill this pledge individually.
       let fulfillResult = { fulfilled: 0 };
       if (pledge.campaign_id) {
         fulfillResult = await PledgeFulfillmentService.checkAndFulfill(pledge.campaign_id);
       }
 
-      // If checkAndFulfill didn't pick it up (goal not yet reached), fulfil this
-      // specific pledge directly so the admin action always takes effect.
+      // If checkAndFulfill didn't pick it up (goal not yet reached), fulfill this
+      // specific pledge directly via fulfillSinglePledge (executing Stellar payment) so admin action takes effect.
       const refreshed = await Pledge.findById(id);
       if (refreshed && refreshed.status === 'pending') {
-        await require('../../utils/database').run(
-          `UPDATE pledges SET status = 'fulfilled' WHERE id = ? AND status = 'pending'`,
-          [id]
-        );
-        WebhookService.deliver('pledge.fulfilled', { pledge: { ...refreshed, status: 'fulfilled' } }).catch(() => {});
-        fulfillResult = { fulfilled: fulfillResult.fulfilled + 1 };
+        const singleResult = await PledgeFulfillmentService.fulfillSinglePledge(refreshed);
+        if (singleResult.success) {
+          fulfillResult = { fulfilled: fulfillResult.fulfilled + 1 };
+        }
       }
 
       const updated = await Pledge.findById(id);

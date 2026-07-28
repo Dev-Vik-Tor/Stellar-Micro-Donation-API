@@ -10,6 +10,7 @@
 
 const express = require('express');
 const router = express.Router();
+const StellarSdk = require('stellar-sdk');
 const { checkPermission } = require('../../middleware/rbac');
 const { PERMISSIONS } = require('../../utils/permissions');
 const { validateSchema } = require('../../middleware/schemaValidation');
@@ -122,6 +123,22 @@ router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), payloadSi
       return res.status(400).json({
         success: false,
         error: 'Source and destination wallets cannot be the same',
+      });
+    }
+
+    // ── Keypair ownership verification ─────────────────────────────────────────
+    try {
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      if (sourceKeypair.publicKey() !== sourceWallet.publicKey) {
+        return res.status(403).json({
+          success: false,
+          error: 'sourceSecret does not belong to the target wallet being merged',
+        });
+      }
+    } catch (err) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid sourceSecret key format',
       });
     }
 

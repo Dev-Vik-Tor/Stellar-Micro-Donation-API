@@ -108,7 +108,10 @@ router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), wall
       return res.status(400).json({ success: false, error: 'Missing required fields: domain, sourceSecret' });
     }
 
-    const _wallet = walletService.getWalletById(req.params.id);
+    const wallet = await walletService.getWalletById(req.params.id);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
 
     const stellarSvc = getStellarService();
     let result;
@@ -131,7 +134,7 @@ router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), wall
       details: { walletId: req.params.id, homeDomain: domain, txHash: result.hash },
     });
 
-    return res.json({ success: true, data: { homeDomain: domain, hash: result.hash, ledger: result.ledger } });
+    return res.json({ success: true, data: { homeDomain: domain } });
   } catch (error) {
     next(error);
   }
@@ -143,7 +146,10 @@ router.put('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), wall
  */
 router.get('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, asyncHandler(async (req, res, next) => {
   try {
-    const wallet = walletService.getWalletById(req.params.id);
+    const wallet = await walletService.getWalletById(req.params.id);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
 
     const stellarSvc = getStellarService();
     const homeDomain = await stellarSvc.getHomeDomain(wallet.address || wallet.publicKey).catch(() => null);
@@ -161,7 +167,10 @@ router.get('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_READ), wallet
  */
 router.post('/:id/home-domain/verify', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, payloadSizeLimiter(ENDPOINT_LIMITS.wallet), asyncHandler(async (req, res, next) => {
   try {
-    const wallet = walletService.getWalletById(req.params.id);
+    const wallet = await walletService.getWalletById(req.params.id);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
 
     const stellarSvc = getStellarService();
     const publicKey = wallet.address || wallet.publicKey;
