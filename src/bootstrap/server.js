@@ -334,6 +334,7 @@ async function startServer(app, overrideServices = {}) {
 
         // 7. Stop remaining background services
         reconciliationService.stop();
+        reconcileTotalsJob.stop();
         auditLogRetentionService.stop();
         retentionService.stop();
         transactionSyncScheduler.stop();
