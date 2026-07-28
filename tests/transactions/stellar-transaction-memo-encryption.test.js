@@ -348,7 +348,7 @@ describe('POST /donations with encryptMemo', () => {
 
 // ── GET /donations/:id/memo/decrypt ──────────────────────────────────────────
 
-describe('GET /donations/:id/memo/decrypt', () => {
+describe('POST /donations/:id/memo/decrypt', () => {
   let encryptedTxId;
 
   beforeEach(async () => {
@@ -365,9 +365,9 @@ describe('GET /donations/:id/memo/decrypt', () => {
 
   test('200 with correct memo for valid recipient secret', async () => {
     const res = await request(app)
-      .get(`/donations/${encryptedTxId}/memo/decrypt`)
+      .post(`/donations/${encryptedTxId}/memo/decrypt`)
       .set('X-API-Key', 'test-key')
-      .query({ recipientSecret: recipientSec });
+      .send({ recipientSecret: recipientSec });
 
     expect(res.status).toBe(200);
     expect(res.body.data.memo).toBe('secret-note');
@@ -377,9 +377,9 @@ describe('GET /donations/:id/memo/decrypt', () => {
 
   test('403 with wrong recipient secret', async () => {
     const res = await request(app)
-      .get(`/donations/${encryptedTxId}/memo/decrypt`)
+      .post(`/donations/${encryptedTxId}/memo/decrypt`)
       .set('X-API-Key', 'test-key')
-      .query({ recipientSecret: wrongKp.secret() });
+      .send({ recipientSecret: wrongKp.secret() });
 
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('DECRYPTION_FAILED');
@@ -387,9 +387,9 @@ describe('GET /donations/:id/memo/decrypt', () => {
 
   test('404 for unknown donation ID', async () => {
     const res = await request(app)
-      .get('/donations/nonexistent-xyz/memo/decrypt')
+      .post('/donations/nonexistent-xyz/memo/decrypt')
       .set('X-API-Key', 'test-key')
-      .query({ recipientSecret: recipientSec });
+      .send({ recipientSecret: recipientSec });
 
     expect(res.status).toBe(404);
   });
@@ -404,9 +404,9 @@ describe('GET /donations/:id/memo/decrypt', () => {
     const tx = Transaction.loadTransactions().find(t => t.idempotencyKey === idem);
 
     const res = await request(app)
-      .get(`/donations/${tx.id}/memo/decrypt`)
+      .post(`/donations/${tx.id}/memo/decrypt`)
       .set('X-API-Key', 'test-key')
-      .query({ recipientSecret: recipientSec });
+      .send({ recipientSecret: recipientSec });
 
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('MEMO_NOT_ENCRYPTED');
@@ -414,8 +414,9 @@ describe('GET /donations/:id/memo/decrypt', () => {
 
   test('400 when recipientSecret is missing', async () => {
     const res = await request(app)
-      .get(`/donations/${encryptedTxId}/memo/decrypt`)
-      .set('X-API-Key', 'test-key');
+      .post(`/donations/${encryptedTxId}/memo/decrypt`)
+      .set('X-API-Key', 'test-key')
+      .send({});
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('MISSING_FIELD');

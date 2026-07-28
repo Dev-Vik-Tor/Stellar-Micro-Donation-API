@@ -46,6 +46,7 @@ describe('toStroops', () => {
 
   test('rejects negative value', () => {
     expect(() => toStroops('-1')).toThrow();
+    expect(() => toStroops('-0.5')).toThrow();
   });
 
   test('rejects non-numeric string', () => {
