@@ -10,10 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Remove `clientIp` and `protocol` from `GET /health` response to prevent IP enumeration (#758)
 - Add allowlist validation for `category` and `severity` filter parameters in `GET /admin/audit-logs` to prevent SQL injection (#760)
+- Add container image vulnerability scanning to CI pipeline with Trivy (#1233)
+  - Automated scanning on Dockerfile/dependency changes and daily schedule
+  - Build fails on CRITICAL/HIGH vulnerabilities
+  - Allowlist process for accepted/unfixable findings in `.trivyignore`
+  - Scan reports uploaded to GitHub Security tab and CI artifacts
+  - Local scanning scripts for developers (`npm run scan:container`)
 
 ### Added
 - `MockStellarServiceStub`: thin (<200 line) configurable stub implementing `StellarServiceInterface` for unit tests (#756)
 - `npm run changelog` script to generate changelog entries from conventional commits (#761)
+- Container security documentation in `docs/CONTAINER_SECURITY.md` (#1233)
 
 ---
 

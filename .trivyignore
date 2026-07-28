@@ -1,0 +1,21 @@
+# Trivy Vulnerability Allowlist
+#
+# This file contains vulnerabilities that have been reviewed and accepted.
+# Each entry must include:
+# - CVE ID
+# - Justification for acceptance
+# - Expiry date (format: YYYY-MM-DD) for re-evaluation
+# - Reviewer name/team
+#
+# Format:
+# CVE-YYYY-NNNNN  # Justification | Expiry: YYYY-MM-DD | Reviewer: Name
+#
+# Example entries (remove when adding real entries):
+# CVE-2024-12345  # No fix available in alpine:3.19; risk accepted as non-exploitable in our context | Expiry: 2026-12-31 | Reviewer: Security Team
+# CVE-2024-67890  # False positive - not applicable to our usage | Expiry: 2026-06-30 | Reviewer: DevOps Team
+#
+# ────────────────────────────────────────────────────────────────────────────
+# ACCEPTED VULNERABILITIES
+# ────────────────────────────────────────────────────────────────────────────
+
+# Add accepted vulnerabilities below this line with full justification
