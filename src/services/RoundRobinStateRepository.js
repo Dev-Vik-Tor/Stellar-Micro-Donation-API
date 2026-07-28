@@ -31,14 +31,18 @@ class RoundRobinStateRepository {
    */
   async incrementAndWrap(poolName, poolSize) {
     const current = await this.getIndex(poolName);
-    const next = (current + 1) % poolSize;
+    // If the pool has shrunk since the last rotation, the persisted index may
+    // be out of range. Wrap it against the current poolSize so we never return
+    // an index >= poolSize (which would cause an out-of-bounds access later).
+    const used = current % poolSize;
+    const next = (used + 1) % poolSize;
     await Database.run(
       `INSERT INTO round_robin_state (pool_name, next_index, updatedAt)
        VALUES (?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(pool_name) DO UPDATE SET next_index = excluded.next_index, updatedAt = excluded.updatedAt`,
       [poolName, next]
     );
-    return current;
+    return used;
   }
 
   /**
