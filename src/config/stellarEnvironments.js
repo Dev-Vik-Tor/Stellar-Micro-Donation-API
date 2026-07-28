@@ -41,15 +41,25 @@ function getActiveEnvironment() {
     throw new Error(`Invalid STELLAR_ENVIRONMENT provided: '${envName}'. Must be one of: ${Object.keys(environments).join(', ')}.`);
   }
 
-  if (envName === 'mainnet' && process.env.NODE_ENV === 'test') {
-    throw new Error('SECURITY BLOCK: Mainnet operations are explicitly prevented when NODE_ENV is set to "test".');
-  }
-
   // Resolve the active network — STELLAR_NETWORK overrides STELLAR_ENVIRONMENT
   const resolvedNetwork = (process.env.STELLAR_NETWORK || envName).toLowerCase();
 
+  // Validate that the resolved network (from STELLAR_NETWORK) is also a known environment
+  if (!Object.keys(environments).includes(resolvedNetwork)) {
+    throw new Error(`Invalid STELLAR_NETWORK provided: '${resolvedNetwork}'. Must be one of: ${Object.keys(environments).join(', ')}.`);
+  }
+
+  // SECURITY BLOCK: guard against mainnet use during tests.
+  // Check BOTH envName (STELLAR_ENVIRONMENT) and resolvedNetwork (STELLAR_NETWORK) because
+  // resolvedNetwork takes precedence for horizonUrl resolution — setting STELLAR_ENVIRONMENT=testnet
+  // with STELLAR_NETWORK=mainnet would otherwise bypass this guard while still routing SDK calls
+  // to the real mainnet Horizon endpoint.
+  if ((envName === 'mainnet' || resolvedNetwork === 'mainnet') && process.env.NODE_ENV === 'test') {
+    throw new Error('SECURITY BLOCK: Mainnet operations are explicitly prevented when NODE_ENV is set to "test".');
+  }
+
   // Derive the expected Horizon URL from the resolved network
-  const expectedHorizonUrl = (environments[resolvedNetwork] || environments[envName]).horizonUrl;
+  const expectedHorizonUrl = environments[resolvedNetwork].horizonUrl;
 
   // Use HORIZON_URL override if provided, otherwise default to the expected URL for the network
   const horizonUrl = process.env.HORIZON_URL || expectedHorizonUrl;
@@ -63,7 +73,9 @@ function getActiveEnvironment() {
     );
   }
 
-  const preset = environments[envName];
+  // Use the preset for resolvedNetwork so that networkPassphrase/baseReserve/feeMultiplier
+  // are consistent with the network actually being used (horizonUrl is also from resolvedNetwork).
+  const preset = environments[resolvedNetwork];
 
   return {
     environment: envName,
