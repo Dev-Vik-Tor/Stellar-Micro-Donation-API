@@ -13,8 +13,9 @@ to go from a fresh clone to an open PR.
 4. [Linting & Security](#4-linting--security)
 5. [Database Migrations](#5-database-migrations)
 6. [OpenAPI Spec](#6-openapi-spec)
-7. [Branch & Commit Conventions](#7-branch--commit-conventions)
-8. [Pre-PR Checklist](#8-pre-pr-checklist)
+7. [Keeping Example Base URLs in Sync](#7-keeping-example-base-urls-in-sync)
+8. [Branch & Commit Conventions](#8-branch--commit-conventions)
+9. [Pre-PR Checklist](#9-pre-pr-checklist)
 
 ---
 
@@ -156,7 +157,29 @@ and will fail if the spec is stale.
 
 ---
 
-## 7. Branch & Commit Conventions
+## 7. Keeping Example Base URLs in Sync
+
+The base URL used in all copy-paste onboarding material must always match the
+versioned mount prefix in `src/bootstrap/routes.js`.
+
+**Current mount prefix:** `/api/v1`  
+**Required base URL in examples:** `http://localhost:3000/api/v1`
+
+Files that hardcode this value:
+
+| File | Location |
+|------|----------|
+| `examples/API_CURL_EXAMPLES.md` | `BASE_URL` variable (two occurrences) |
+| `examples/Stellar-Micro-Donation-API.postman_collection.json` | `BASE_URL` collection variable |
+
+**Rule:** Any PR that changes the mount prefix in `src/bootstrap/routes.js` **must**
+update both example files in the same commit. CI should (and eventually will) grep
+for the old prefix and fail if a stale value is found. Until that check exists,
+confirm the values are consistent as part of the [Pre-PR Checklist](#9-pre-pr-checklist).
+
+---
+
+## 8. Branch & Commit Conventions
 
 **Branches**
 
@@ -180,7 +203,7 @@ Breaking changes must include a `BREAKING CHANGE:` footer in the commit body.
 
 ---
 
-## 8. Pre-PR Checklist
+## 9. Pre-PR Checklist
 
 Before pushing and opening a PR, run through this list:
 
@@ -203,7 +226,7 @@ When the PR is ready:
 
 ---
 
-## 9. Security
+## 10. Security
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
@@ -215,7 +238,7 @@ See **[SECURITY.md](../SECURITY.md)** for:
 
 ---
 
-## 10. Key Documentation
+## 11. Key Documentation
 
 When working on a feature, these docs will save you time:
 

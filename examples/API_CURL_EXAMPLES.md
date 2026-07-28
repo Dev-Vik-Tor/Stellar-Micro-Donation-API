@@ -7,7 +7,7 @@ This guide provides copy-paste curl commands to test the core donation API flows
 ```bash
 # Set your environment variables
 export API_KEY="your-api-key-here"
-export BASE_URL="http://localhost:3000/api"
+export BASE_URL="http://localhost:3000/api/v1"
 export DONOR_PUBLIC_KEY="GBUQWP3BOUZX34ULNQG23RQ6F4BWFIРЕQCLMNZ4QSY47PCNQRICKS57"
 export RECIPIENT_PUBLIC_KEY="GCEZWJG7SSHQUUP7IBRN23JQCQR53ROE44TSBROAM4TOBJOJJU5YV2Z2"
 ```
@@ -215,7 +215,7 @@ set -e  # Exit on error
 
 # Set variables
 export API_KEY="dev-key"
-export BASE_URL="http://localhost:3000/api"
+export BASE_URL="http://localhost:3000/api/v1"
 export DONOR="GBUQWP3BOUZX34ULNQG23RQ6F4BWFIРЕQCLMNZ4QSY47PCNQRICKS57"
 export RECIPIENT="GCEZWJG7SSHQUUP7IBRN23JQCQR53ROE44TSBROAM4TOBJOJJU5YV2Z2"
 
