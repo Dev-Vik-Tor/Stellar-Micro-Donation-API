@@ -13,7 +13,11 @@ function blockCheck(req, res, next) {
     return next();
   }
 
-  const ip = req.ip || req.get('X-Forwarded-For')?.split(',')[0]?.trim() || req.connection.remoteAddress || 'unknown';
+  // Use only req.ip (set by Express based on trust proxy) — never fall back to
+  // the X-Forwarded-For header, which is client-controlled and can be spoofed.
+  // If req.ip is not available, fall through to 'unknown' and allow the request
+  // to proceed; a missing IP is not grounds for a hard block.
+  const ip = req.ip || 'unknown';
 
   if (abuseDetectionService.isBlocked(ip)) {
     log.warn('BLOCK_CHECK', 'Request blocked', { ip, path: req.path, method: req.method });

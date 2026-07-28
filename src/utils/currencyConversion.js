@@ -53,14 +53,22 @@ function roundHalfEven(value, dp = XLM_DECIMAL_PLACES) {
   const floor   = Math.floor(shifted);
   const diff    = shifted - floor;
 
+  // IEEE-754 floating-point multiplication cannot reliably land on exactly 0.5
+  // even when the true mathematical value is halfway.  We use an epsilon of
+  // 1e-10 (many orders of magnitude smaller than the 7-dp precision we care
+  // about) to detect "close enough to 0.5" without treating non-halfway values
+  // as halfway.
+  const EPSILON = 1e-10;
+  const isHalfway = Math.abs(diff - 0.5) < EPSILON;
+
   let rounded;
-  if (diff < 0.5) {
-    rounded = floor;
-  } else if (diff > 0.5) {
-    rounded = floor + 1;
-  } else {
-    // Exactly halfway — round to even
+  if (isHalfway) {
+    // Exactly halfway — round to even (banker's rounding)
     rounded = floor % 2 === 0 ? floor : floor + 1;
+  } else if (diff < 0.5) {
+    rounded = floor;
+  } else {
+    rounded = floor + 1;
   }
 
   return rounded / factor;
