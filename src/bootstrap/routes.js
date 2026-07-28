@@ -71,6 +71,8 @@ const ADMIN_ROUTES = [
   ['/admin/geo-rules',                require('../routes/admin/geoRules')],
   ['/admin/payment-channels',         require('../routes/admin/paymentChannels')],
   ['/admin/system-info',              require('../routes/admin/systemInfo')],
+  ['/admin/feature-flags',            require('../routes/admin/featureFlags')],
+  ['/admin',                          require('../routes/admin')],
   ['/admin',                          require('../routes/admin/backup')],
   ['/admin/audit-logs/export',        require('../routes/admin/auditLogExport')],
   ['/admin/security/scan',            require('../routes/admin/securityScan')],
@@ -144,6 +146,7 @@ function mountRoutes(app, services = {}) {
     networkStatusService,
     recurringDonationScheduler,
     transactionSyncScheduler,
+    feeBumpService,
   } = services;
 
   // Network route needs a service reference injected at mount time
@@ -343,6 +346,12 @@ function mountRoutes(app, services = {}) {
 
   for (const [path, router] of ADMIN_ROUTES) {
     app.use(path, router);
+  }
+
+  const effectiveFeeBumpService = feeBumpService || (require('../config/serviceContainer').getFeeBumpService ? require('../config/serviceContainer').getFeeBumpService() : null);
+  if (effectiveFeeBumpService) {
+    const createFeeBumpRouter = require('../routes/admin/feeBump');
+    app.use('/admin/transactions', createFeeBumpRouter(effectiveFeeBumpService));
   }
 
   app.use('/admin/totp', requireApiKey, require('../routes/admin/totp'));
