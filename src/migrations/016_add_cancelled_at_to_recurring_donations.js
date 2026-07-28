@@ -8,7 +8,7 @@
  * via DELETE /stream/schedules/:id.
  */
 
-exports.name = '013_add_cancelled_at_to_recurring_donations';
+exports.name = '016_add_cancelled_at_to_recurring_donations';
 
 exports.up = async (db) => {
   const columns = await db.all('PRAGMA table_info(recurring_donations)');

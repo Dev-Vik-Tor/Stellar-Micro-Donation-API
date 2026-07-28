@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '016_nonce_store';
+exports.name = '022_nonce_store';
 
 exports.up = async (db) => {
   await db.run(`

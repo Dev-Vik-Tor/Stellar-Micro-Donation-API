@@ -15,7 +15,7 @@
 
 const STROOPS_PER_XLM = 10_000_000;
 
-exports.name = '015_amount_precision_stroops';
+exports.name = '021_amount_precision_stroops';
 
 exports.up = async (db) => {
   // 1. Add temporary stroops column (tolerate re-runs after a partial failure —

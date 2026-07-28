@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '012_refresh_token_revocation';
+exports.name = '014_refresh_token_revocation';
 
 exports.up = async (db) => {
   // Add revoked_at and revoke_reason columns to refresh_tokens table.

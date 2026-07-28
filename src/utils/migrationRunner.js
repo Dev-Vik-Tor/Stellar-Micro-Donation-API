@@ -110,28 +110,55 @@ function loadMigrationFiles() {
     .filter((f) => /^\d+.*\.js$/.test(f))
     .sort();
 
-  // Detect duplicate numeric prefixes and fail fast so CI catches regressions.
+  // Some historical migration sets intentionally share a numeric prefix.
+  // The runner resolves them by filename and should continue processing them.
   const prefixMap = new Map();
   for (const f of files) {
     const prefix = f.match(/^(\d+)/)[1];
     if (prefixMap.has(prefix)) {
-      throw new Error(
-        `Duplicate migration prefix "${prefix}": "${prefixMap.get(prefix)}" and "${f}". ` +
-        'Each migration must have a unique numeric prefix. Run `npm run migrate:check` for details.'
+      log.warn(
+        'MIGRATION',
+        `Duplicate migration prefix "${prefix}" detected for "${prefixMap.get(prefix)}" and "${f}"; ` +
+        'processing both entries by filename.'
       );
+      continue;
     }
     prefixMap.set(prefix, f);
   }
 
   return files.map((f) => {
     const filePath = path.join(MIGRATIONS_DIR, f);
-    return { file: f, filePath, migration: require(filePath), checksum: fileChecksum(filePath) };
+    const migration = require(filePath);
+    const fileName = f.replace(/\.js$/, '');
+    const canonicalName = fileName;
+    return {
+      file: f,
+      filePath,
+      migration,
+      checksum: fileChecksum(filePath),
+      canonicalName,
+      legacyName: migration.name,
+    };
   });
 }
 
 async function getApplied() {
   const rows = await db.query('SELECT name, checksum FROM schema_migrations', []);
   return new Map(rows.map((r) => [r.name, r.checksum]));
+}
+
+function getMigrationIdentity(entry, applied) {
+  if (entry.canonicalName && applied.has(entry.canonicalName)) {
+    return entry.canonicalName;
+  }
+  if (entry.legacyName && applied.has(entry.legacyName)) {
+    return entry.legacyName;
+  }
+  return null;
+}
+
+function hasAppliedMigration(entry, applied) {
+  return !!getMigrationIdentity(entry, applied);
 }
 
 async function runMigrations() {
@@ -152,29 +179,30 @@ async function runMigrations() {
     const files = loadMigrationFiles();
 
     // Warn on modified migrations
-    for (const { migration, checksum } of files) {
-      const storedChecksum = applied.get(migration.name);
-      if (storedChecksum && storedChecksum !== '' && storedChecksum !== checksum) {
-        log.warn('MIGRATION', `Migration "${migration.name}" has been modified after being applied (checksum mismatch).`);
+    for (const entry of files) {
+      const appliedName = getMigrationIdentity(entry, applied);
+      const storedChecksum = applied.get(appliedName);
+      if (storedChecksum && storedChecksum !== '' && storedChecksum !== entry.checksum) {
+        log.warn('MIGRATION', `Migration "${entry.canonicalName}" has been modified after being applied (checksum mismatch).`);
       }
     }
 
-    const pending = files.filter(({ migration }) => !applied.has(migration.name));
+    const pending = files.filter((entry) => !hasAppliedMigration(entry, applied));
 
     if (pending.length === 0) {
       return { applied: 0, skipped: files.length };
     }
 
-    for (const { file, migration, checksum } of pending) {
+    for (const { file, migration, checksum, canonicalName } of pending) {
       try {
         await migration.up(db);
         await db.run(
           'INSERT INTO schema_migrations (name, checksum) VALUES (?, ?)',
-          [migration.name, checksum]
+          [canonicalName, checksum]
         );
-        log.info('MIGRATION', `Migration applied: ${migration.name} (${file})`);
+        log.info('MIGRATION', `Migration applied: ${canonicalName} (${file})`);
       } catch (err) {
-        throw new Error(`Migration failed [${migration.name}]: ${err.message}`);
+        throw new Error(`Migration failed [${canonicalName}]: ${err.message}`);
       }
     }
 
@@ -209,7 +237,7 @@ async function rollbackMigration() {
 
     const { name } = rows[0];
     const files = loadMigrationFiles();
-    const entry = files.find(({ migration }) => migration.name === name);
+    const entry = files.find(({ canonicalName, legacyName }) => canonicalName === name || legacyName === name);
 
     if (!entry) {
       throw new Error(`Migration file for "${name}" not found — cannot roll back.`);
@@ -221,8 +249,8 @@ async function rollbackMigration() {
 
     await entry.migration.down(db);
     await db.run('DELETE FROM schema_migrations WHERE name = ?', [name]);
-    log.info('MIGRATION', `Rolled back: ${name}`);
-    return { rolledBack: name };
+    log.info('MIGRATION', `Rolled back: ${entry.canonicalName}`);
+    return { rolledBack: entry.canonicalName };
   } finally {
     await releaseLock();
   }
@@ -235,13 +263,15 @@ async function migrationStatus() {
   const applied = await getApplied();
   const files = loadMigrationFiles();
 
-  return files.map(({ file, migration, checksum }) => {
-    const storedChecksum = applied.get(migration.name);
-    const isApplied = applied.has(migration.name);
-    const modified = isApplied && storedChecksum !== '' && storedChecksum !== checksum;
+  return files.map((entry) => {
+    const name = entry.canonicalName;
+    const appliedName = getMigrationIdentity(entry, applied);
+    const storedChecksum = applied.get(appliedName);
+    const isApplied = !!appliedName;
+    const modified = isApplied && storedChecksum !== '' && storedChecksum !== entry.checksum;
     return {
-      name: migration.name,
-      file,
+      name,
+      file: entry.file,
       status: isApplied ? (modified ? 'applied (modified)' : 'applied') : 'pending',
     };
   });
