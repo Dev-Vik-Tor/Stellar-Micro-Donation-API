@@ -271,6 +271,40 @@ describe('#1157 Idempotency keys / unique constraints for donation creation', ()
       expect(results[0].amount).toBe(3);
     });
 
+    it('Transaction.create: concurrent same-key creates leave one persisted record and one in-memory record', async () => {
+      const key = `concurrent-idem-agreement-${Date.now()}`;
+      const payload = {
+        amount: 4,
+        donor: 'GABC',
+        recipient: 'GXYZ',
+        idempotencyKey: key,
+      };
+
+      const results = await Promise.all(
+        Array.from({ length: 2 }, () =>
+          new Promise(resolve => setImmediate(() => resolve(Transaction.create(payload))))
+        )
+      );
+
+      const uniqueIds = new Set(results.map(r => r.id));
+      expect(uniqueIds.size).toBe(1);
+
+      const inMemoryMatches = Transaction.getAll().filter(t => t.idempotencyKey === key);
+      expect(inMemoryMatches).toHaveLength(1);
+      expect(inMemoryMatches[0].id).toBe(results[0].id);
+
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const rows = await Database.all(
+        'SELECT * FROM donations_store WHERE idempotency_key = ?',
+        [key]
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(results[0].id);
+    });
+
     it('transactions table: concurrent inserts produce exactly one row via OR IGNORE', async () => {
       const key = `tx-race-${Date.now()}`;
 
