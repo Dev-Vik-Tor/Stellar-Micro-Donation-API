@@ -8,6 +8,12 @@ on:
   schedule:
     - cron: '0 0 * * *'
 
+# Cancel in-progress runs for the same branch/PR when a new push arrives.
+# Scheduled (nightly) runs are not cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   issues: write
