@@ -177,11 +177,35 @@ function parseLanguage(acceptLanguage) {
 
 /**
  * Get a localised standard error message.
+ *
+ * Resolution order (first match wins):
+ *   1. DB-backed translation cache (populated by loadTranslations / the admin i18n API)
+ *   2. Static fallback catalogue (MESSAGES above)
+ *
+ * This connects the admin i18n management API to actual runtime error responses:
+ * any translation edited via PATCH /admin/i18n/messages/:lang/:key will take
+ * effect within one cache TTL (60 s) for all callers of getMessage(), including
+ * the error handler.
+ *
  * @param {string} key - Message key (e.g. 'VALIDATION_ERROR').
  * @param {string} [lang='en'] - Language code; unsupported languages fall back to English.
- * @returns {string|null} The localised message, or null when the key is unknown.
+ * @returns {string|null} The localised message, or null when the key is unknown in both catalogues.
  */
 function getMessage(key, lang = 'en') {
+  // 1. Check the DB-backed in-memory cache first.
+  //    translationCache is populated asynchronously by loadTranslations() and by
+  //    the admin i18n controller.  It is a plain object so reading it is
+  //    synchronous and safe to call from the (synchronous) error handler.
+  const dbEntry = translationCache[key];
+  if (dbEntry) {
+    // dbEntry is a Map (TranslationDoc) or a plain object depending on the caller.
+    const dbValue = typeof dbEntry.get === 'function'
+      ? (dbEntry.get(lang) || dbEntry.get('en'))
+      : (dbEntry[lang] || dbEntry['en']);
+    if (dbValue) return dbValue;
+  }
+
+  // 2. Fall back to the static catalogue.
   const entry = MESSAGES[key];
   if (!entry) return null;
   return entry[lang] || entry.en;

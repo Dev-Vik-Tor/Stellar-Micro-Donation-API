@@ -26,6 +26,9 @@ class EscrowContract {
    * @returns {{ donorId: string, amount: number, newBalance: number }}
    */
   deposit(donorId, amount) {
+    if (this._released) {
+      throw new Error('Escrow already released; deposits are no longer accepted');
+    }
     if (typeof amount !== 'number' || amount <= 0) {
       throw new Error('amount must be positive');
     }
@@ -41,6 +44,9 @@ class EscrowContract {
    * @returns {{ recipientId: string, amount: number, events: ContractEvent[] }}
    */
   release(recipientId) {
+    if (this._released) {
+      throw new Error('Escrow already released; double-release is not allowed');
+    }
     if (!Number.isFinite(this._goalAmount) || this._balance < this._goalAmount) {
       throw new Error('Goal not yet reached');
     }
