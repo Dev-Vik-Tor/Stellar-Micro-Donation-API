@@ -201,6 +201,19 @@ function mountRoutes(app, services = {}) {
 
   app.use('/api/v1', apiV1);
 
+  // ── GraphQL endpoint (Issue #1366) ────────────────────────────────────────
+  // createGraphQLRouter() was defined and exported in src/graphql/index.js but
+  // was never mounted. Mount it at /graphql so POST /graphql is reachable.
+  // Auth (requireApiKey), depth-limiting, and introspection rules are all applied
+  // inside the router itself.
+  try {
+    const { createGraphQLRouter } = require('../graphql/index');
+    app.use('/graphql', createGraphQLRouter());
+    log.info('ROUTES', 'GraphQL HTTP endpoint mounted at /graphql');
+  } catch (err) {
+    log.warn('ROUTES', 'GraphQL router could not be mounted', { error: err.message });
+  }
+
   // ── Deprecation redirects for unversioned paths (Issue #738) ─────────────────
   app.use((req, res, next) => {
     const matchesLegacy = UNVERSIONED_PATHS.some(p => req.path === p || req.path.startsWith(p + '/'));

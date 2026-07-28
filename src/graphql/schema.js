@@ -374,7 +374,17 @@ function buildMutationType({ donationService, walletService }) {
         args: { input: { type: new GraphQLNonNull(CreateDonationInput) } },
         resolve: async (_, { input }, context) => {
           assertPermission(context, 'donations:create');
-          const donation = await donationService.createDonationRecord(input);
+          // Map GraphQL input field names to the DonationService parameter contract.
+          // The schema uses senderId/receiverId (integer IDs) while createDonationRecord
+          // expects donor/recipient (wallet address strings or identifiers). (#1367)
+          const { senderId, receiverId, amount, memo, currency } = input;
+          const donation = await donationService.createDonationRecord({
+            donor: senderId,
+            recipient: receiverId,
+            amount,
+            memo,
+            currency,
+          });
           return { success: true, donation };
         },
       },
