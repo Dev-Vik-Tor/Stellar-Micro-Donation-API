@@ -136,6 +136,11 @@ describe('EscrowContract', () => {
     expect(() => new EscrowContract(-5)).toThrow('goalAmount must be positive');
   });
 
+  test('constructor throws for NaN goalAmount', () => {
+    expect(() => new EscrowContract(NaN)).toThrow('goalAmount must be positive');
+    expect(() => new EscrowContract(Number.POSITIVE_INFINITY)).toThrow('goalAmount must be positive');
+  });
+
   test('getState returns correct initial shape', () => {
     const c = new EscrowContract(100);
     const state = c.getState();
@@ -188,6 +193,13 @@ describe('EscrowContract', () => {
     c.release('recipient');
     expect(c.getState().balance).toBe(0);
     expect(c.getState().released).toBe(true);
+  });
+
+  test('release throws when goalAmount is not finite', () => {
+    const c = new EscrowContract(100);
+    // Force invalid state after construction to simulate downstream corruption.
+    c._goalAmount = NaN;
+    expect(() => c.release('recipient')).toThrow('Goal not yet reached');
   });
 });
 

@@ -116,8 +116,8 @@ router.post('/', requireAdmin(), payloadSizeLimiter(ENDPOINT_LIMITS.admin), asyn
       throw new ValidationError('startDate must be before endDate', null, ERROR_CODES.INVALID_REQUEST);
     }
 
-    // Use a system-level key ID for admin exports
-    const apiKeyId = (req.user && req.user.id) || 'admin';
+    // Attribute export job to the authenticated admin API key or user context
+    const apiKeyId = (req.apiKey && (typeof req.apiKey === 'string' ? req.apiKey : (req.apiKey.id || req.apiKey.key))) || (req.user && req.user.id) || 'admin';
 
     const result = await AuditLogExportService.queueExportJob(apiKeyId, {
       startDate: startDate || null,

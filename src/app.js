@@ -34,6 +34,7 @@ function createApp() {
   const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
   const networkStatusService = serviceContainer.getNetworkStatusService();
   const transactionSyncScheduler = serviceContainer.getTransactionSyncScheduler();
+  const feeBumpService = serviceContainer.getFeeBumpService();
 
   const { setService: setNetworkService } = require('./routes/network');
   setNetworkService(networkStatusService);
@@ -46,6 +47,7 @@ function createApp() {
     recurringDonationScheduler,
     networkStatusService,
     transactionSyncScheduler,
+    feeBumpService,
   });
 
   return app;

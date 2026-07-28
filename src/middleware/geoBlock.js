@@ -24,6 +24,7 @@ class GeoBlockMiddleware {
   constructor(options = {}) {
     this.lookup = null;
     this.initialized = false;
+    this.initializationError = null;
     this.ruleService = options.ruleService || GeoRuleService;
     this.auditLogService = options.auditLogService || AuditLogService;
     if (process.env.NODE_ENV !== 'test') {
@@ -44,7 +45,9 @@ class GeoBlockMiddleware {
       // Check if database file exists
       if (!fs.existsSync(dbPath)) {
         log.warn('GEO_BLOCK', `MaxMind database not found at ${dbPath}. Geo-blocking will be disabled.`);
+        this.lookup = null;
         this.initialized = false;
+        this.initializationError = new Error('MaxMind database not found');
         return;
       }
 
@@ -55,10 +58,13 @@ class GeoBlockMiddleware {
 
       this.lookup = await maxmind.open(dbPath);
       this.initialized = true;
+      this.initializationError = null;
       log.info('GEO_BLOCK', `MaxMind GeoIP database loaded from ${dbPath}`);
     } catch (error) {
       log.error('GEO_BLOCK', 'Failed to initialize MaxMind database', { error: error.message });
+      this.lookup = null;
       this.initialized = false;
+      this.initializationError = error;
     }
   }
 
@@ -218,8 +224,17 @@ class GeoBlockMiddleware {
 
     const countryCode = this.getCountryCode(normalizedIp);
 
-    // If no country found and no blocking configured, allow
+    // If no country found and no blocking configured, allow.
+    // If the GeoIP database is unavailable while geo rules are active, fail closed.
     if (!countryCode) {
+      if (!this.initialized && this.hasActiveRules(ruleState)) {
+        return {
+          block: true,
+          reason: 'geo',
+          countryCode: null,
+          matchedRule: null
+        };
+      }
       return { block: false, reason: null };
     }
 

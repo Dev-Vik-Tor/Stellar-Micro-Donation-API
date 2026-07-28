@@ -174,7 +174,7 @@ function stripUnknown(data, segmentSchema) {
       if (isPlainObject(value) && rules.fields) {
         result[key] = stripUnknown(value, rules);
       } else {
-        result[key] = value;
+        result[key] = (typeof value === 'string' && rules.trim === true) ? value.trim() : value;
       }
     } else if (allowUnknown) {
       result[key] = value;
@@ -319,6 +319,8 @@ function validateSchema(schemaOrKey, versions, options) {
 
     if (allErrors.length === 0) {
       if (schemaToUse.body) req.body = stripUnknown(req.body ?? {}, schemaToUse.body);
+      if (schemaToUse.query) req.query = stripUnknown(req.query ?? {}, schemaToUse.query);
+      if (schemaToUse.params) req.params = stripUnknown(req.params ?? {}, schemaToUse.params);
     }
 
     if (allErrors.length > 0) {

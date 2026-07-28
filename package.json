@@ -2,6 +2,7 @@
   "name": "stellar-micro-donation-api",
   "version": "1.0.0",
   "description": "Micro-donation API using Stellar blockchain",
+  "license": "MIT",
   "main": "src/app.js",
   "engines": {
     "node": ">=20.0.0",
@@ -49,7 +50,10 @@
     "changelog:check": "node scripts/check-changelog-sync.js",
     "check:no-json-persistence": "node scripts/check-no-json-persistence.js",
     "check:test-naming": "node scripts/check-test-naming.js",
-    "docs:error-codes": "node scripts/generate-error-codes.js"
+    "docs:error-codes": "node scripts/generate-error-codes.js",
+    "scan:container": "bash scripts/scan-container.sh",
+    "scan:container:all": "bash scripts/scan-container.sh --severity CRITICAL,HIGH,MEDIUM,LOW",
+    "scan:container:json": "bash scripts/scan-container.sh --format json --output trivy-results.json"
   },
   "dependencies": {
     "ajv": "^8.12.0",
@@ -68,7 +72,7 @@
     "prom-client": "^15.1.3",
     "qrcode": "^1.5.4",
     "sqlite3": "^6.0.1",
-    "stellar-sdk": "^11.0.0",
+    "stellar-sdk": "^13.0.0",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
     "uuid": "^11.1.1",
@@ -76,7 +80,7 @@
   },
   "devDependencies": {
     "@babel/preset-env": "^7.29.7",
-    "eslint": "^8.57.1",
+    "eslint": "8.57.1",
     "eslint-plugin-local": "file:./eslint-rules",
     "eslint-plugin-no-secrets": "^2.3.3",
     "eslint-plugin-security": "^4.0.0",

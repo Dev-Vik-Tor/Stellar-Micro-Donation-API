@@ -71,9 +71,25 @@ const ADMIN_ROUTES = [
   ['/admin/geo-rules',                require('../routes/admin/geoRules')],
   ['/admin/payment-channels',         require('../routes/admin/paymentChannels')],
   ['/admin/system-info',              require('../routes/admin/systemInfo')],
+  ['/admin/feature-flags',            require('../routes/admin/featureFlags')],
+  ['/admin',                          require('../routes/admin')],
   ['/admin',                          require('../routes/admin/backup')],
   ['/admin/audit-logs/export',        require('../routes/admin/auditLogExport')],
   ['/admin/security/scan',            require('../routes/admin/securityScan')],
+  ['/admin/analytics',                require('../routes/admin/analytics')],
+  ['/admin/api-keys/usage',           require('../routes/admin/apiKeyUsage')],
+  ['/admin/circuit-breaker',          require('../routes/admin/circuitBreaker')],
+  ['/admin/corporate-matching',       require('../routes/admin/corporateMatching')],
+  ['/admin/encryption',               require('../routes/admin/encryption')],
+  ['/admin/feature-flags',            require('../routes/admin/featureFlags')],
+  ['/admin/geo-blocking',             require('../routes/admin/geoBlocking')],
+  ['/admin/impact-metrics',           require('../routes/admin/impactMetrics')],
+  ['/admin/matching-programs',        require('../routes/admin/matchingPrograms')],
+  ['/admin/reconciliation',           require('../routes/admin/reconciliation')],
+  ['/admin/routing',                  require('../routes/admin/routing')],
+  ['/admin/traces',                   require('../routes/admin/traces')],
+  ['/admin/wallets',                  require('../routes/admin/walletLimits')],
+  ['/admin/webhooks',                 require('../routes/admin/webhooks')],
 ];
 
 // Unversioned paths that redirect to /api/v1 (Issue #738)
@@ -130,6 +146,7 @@ function mountRoutes(app, services = {}) {
     networkStatusService,
     recurringDonationScheduler,
     transactionSyncScheduler,
+    feeBumpService,
   } = services;
 
   // Network route needs a service reference injected at mount time
@@ -331,8 +348,18 @@ function mountRoutes(app, services = {}) {
     app.use(path, router);
   }
 
+  const effectiveFeeBumpService = feeBumpService || (require('../config/serviceContainer').getFeeBumpService ? require('../config/serviceContainer').getFeeBumpService() : null);
+  if (effectiveFeeBumpService) {
+    const createFeeBumpRouter = require('../routes/admin/feeBump');
+    app.use('/admin/transactions', createFeeBumpRouter(effectiveFeeBumpService));
+  }
+
   app.use('/admin/totp', requireApiKey, require('../routes/admin/totp'));
   app.use('/admin/inspect/xdr', rbac.requireAdmin(), require('../routes/admin/inspect'));
+  
+  const serviceContainer = require('../config/serviceContainer');
+  const createFeeBumpRouter = require('../routes/admin/feeBump');
+  app.use('/admin/transactions', createFeeBumpRouter(serviceContainer.getFeeBumpService()));
 
   // Audit logs — #796: mandatory pagination, default 50, max 500
   const AUDIT_LOG_DEFAULT_LIMIT = 50;

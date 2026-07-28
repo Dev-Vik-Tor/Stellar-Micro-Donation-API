@@ -12,6 +12,13 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+# Cancel in-progress runs for the same branch/PR when a new push arrives.
+# This avoids wasting CI minutes (especially the 15-min load-test job) on
+# now-superseded commits. Scheduled/manual runs are not cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   load-test:
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '005_geo_rules';
+exports.name = '007_geo_rules';
 
 exports.up = async (db) => {
   await db.run(`

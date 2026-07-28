@@ -25,7 +25,7 @@
  *               GET /:id/timeline
  *
  *   notes.js  — GET /:id/receipt, POST /:id/receipt/email,
- *               GET /:id/memo/decrypt, GET /:id/certificate,
+ *               POST /:id/memo/decrypt, GET /:id/certificate,
  *               GET /:id/certificate/ipfs, GET /:id/impact,
  *               PATCH /:id/status, POST /:id/refund,
  *               GET /:id/tags, POST /:id/tags, DELETE /:id/tags/:tag

@@ -73,6 +73,18 @@ describe('Pledge model', () => {
     expect(Database.run).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO pledges'), expect.any(Array));
   });
 
+  it('stores pledge amounts as stroops when creating a pledge', async () => {
+    const data = { campaign_id: 1, donor_wallet_id: 'GA1', amount: '0.0001000', expires_at: '2099-01-01' };
+    Database.get.mockResolvedValueOnce({ id: 'uuid-1', ...data, amount: 1000n, status: 'pending' });
+
+    await Pledge.create(data);
+
+    expect(Database.run).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO pledges'),
+      expect.arrayContaining([expect.any(String), 1, 'GA1', 1000n, '2099-01-01'])
+    );
+  });
+
   it('listByCampaign returns pledges for a campaign', async () => {
     _store.pledges = [
       { id: 'a', campaign_id: 1, status: 'pending' },
@@ -134,35 +146,36 @@ describe('PledgeFulfillmentService.checkAndFulfill', () => {
   it('fulfills all pending pledges when goal is reached', async () => {
     Database.get.mockResolvedValueOnce({ id: 1, goal_amount: 100, current_amount: 100 });
     _store.pledges = [
-      { id: 'p1', campaign_id: 1, status: 'fulfilled' },
-      { id: 'p2', campaign_id: 1, status: 'fulfilled' },
+      { id: 'p1', campaign_id: 1, status: 'pending' },
+      { id: 'p2', campaign_id: 1, status: 'pending' },
     ];
     const result = await checkAndFulfill(1);
     expect(result.fulfilled).toBe(2);
     expect(Database.run).toHaveBeenCalledWith(
       expect.stringContaining("status = 'fulfilled'"),
-      expect.arrayContaining([1])
+      expect.arrayContaining(['p1'])
     );
   });
 
   it('fires pledge.fulfilled webhook for each fulfilled pledge', async () => {
     Database.get.mockResolvedValueOnce({ id: 1, goal_amount: 50, current_amount: 50 });
-    _store.pledges = [{ id: 'p1', campaign_id: 1, status: 'fulfilled' }];
+    _store.pledges = [{ id: 'p1', campaign_id: 1, status: 'pending' }];
     await checkAndFulfill(1);
     expect(WebhookService.deliver).toHaveBeenCalledWith('pledge.fulfilled', expect.any(Object));
   });
 
-  it('is idempotent — second call with same data fulfills 0 new pledges', async () => {
-    // First call
+  it('is idempotent — second call finds no pending pledges left', async () => {
+    // First call — one pending pledge gets fulfilled
     Database.get.mockResolvedValueOnce({ id: 1, goal_amount: 100, current_amount: 100 });
-    _store.pledges = [{ id: 'p1', campaign_id: 1, status: 'fulfilled' }];
-    await checkAndFulfill(1);
+    _store.pledges = [{ id: 'p1', campaign_id: 1, status: 'pending' }];
+    const first = await checkAndFulfill(1);
+    expect(first.fulfilled).toBe(1);
 
-    // Second call — no pending pledges remain
-    Database.get.mockResolvedValueOnce({ id: 1, goal_amount: 100, current_amount: 100 });
+    // Second call — pledge is now fulfilled, so nothing left to process
     _store.pledges = [{ id: 'p1', campaign_id: 1, status: 'fulfilled' }];
-    const result = await checkAndFulfill(1);
-    expect(result.fulfilled).toBe(1); // fulfilled count from query, not newly changed
+    Database.get.mockResolvedValueOnce({ id: 1, goal_amount: 100, current_amount: 100 });
+    const second = await checkAndFulfill(1);
+    expect(second.fulfilled).toBe(0);
   });
 });
 
@@ -276,7 +289,7 @@ describe('POST /campaigns/:id/pledges — route logic', () => {
 
   it('fulfills pledges when campaign goal is reached', async () => {
     Database.get.mockResolvedValueOnce({ id: 1, goal_amount: 10, current_amount: 10 });
-    _store.pledges = [{ id: 'p1', campaign_id: 1, status: 'fulfilled' }];
+    _store.pledges = [{ id: 'p1', campaign_id: 1, status: 'pending' }];
     const result = await checkAndFulfill(1);
     expect(result.fulfilled).toBe(1);
     expect(WebhookService.deliver).toHaveBeenCalledWith('pledge.fulfilled', expect.any(Object));

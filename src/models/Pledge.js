@@ -6,18 +6,20 @@
 
 const { v4: uuidv4 } = require('uuid');
 const Database = require('../utils/database');
+const { toStroops } = require('../utils/money');
 
 const TABLE = `
   CREATE TABLE IF NOT EXISTS pledges (
     id              TEXT PRIMARY KEY,
     campaign_id     INTEGER NOT NULL,
     donor_wallet_id TEXT NOT NULL,
-    amount          REAL NOT NULL,
+    amount          INTEGER NOT NULL,
     status          TEXT NOT NULL DEFAULT 'pending'
                       CHECK(status IN ('pending','fulfilled','expired','cancelled')),
     expires_at      DATETIME NOT NULL,
     cancel_reason   TEXT,
     cancelled_at    DATETIME,
+    webhook_sent_at DATETIME,
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
   )
@@ -28,14 +30,16 @@ async function initTable() {
   await Database.run(`CREATE INDEX IF NOT EXISTS idx_pledges_campaign ON pledges(campaign_id)`);
   await Database.run(`CREATE INDEX IF NOT EXISTS idx_pledges_status   ON pledges(status)`);
   await Database.run(`CREATE INDEX IF NOT EXISTS idx_pledges_expires  ON pledges(expires_at)`);
+  await Database.run(`CREATE INDEX IF NOT EXISTS idx_pledges_webhook_sent_at ON pledges(webhook_sent_at) WHERE webhook_sent_at IS NULL`);
 }
 
 async function create({ campaign_id, donor_wallet_id, amount, expires_at }) {
   const id = uuidv4();
+  const amountStroops = toStroops(amount);
   await Database.run(
     `INSERT INTO pledges (id, campaign_id, donor_wallet_id, amount, expires_at)
      VALUES (?, ?, ?, ?, ?)`,
-    [id, campaign_id, donor_wallet_id, amount, expires_at]
+    [id, campaign_id, donor_wallet_id, amountStroops, expires_at]
   );
   return Database.get(`SELECT * FROM pledges WHERE id = ?`, [id]);
 }
@@ -71,6 +75,48 @@ async function getExpiredPledges(now = new Date().toISOString()) {
   return Database.query(
     `SELECT * FROM pledges WHERE status = 'expired' AND expires_at < ?`,
     [now]
+  );
+}
+
+/**
+ * Get pledges that have expired but haven't had webhooks sent yet
+ * @param {string} now - ISO timestamp
+ * @returns {Promise<Object[]>}
+ */
+async function getNewlyExpiredPledges(now = new Date().toISOString()) {
+  return Database.query(
+    `SELECT * FROM pledges 
+     WHERE status = 'expired' 
+       AND expires_at < ?
+       AND webhook_sent_at IS NULL`,
+    [now]
+  );
+}
+
+/**
+ * Get pledges that have been fulfilled but haven't had webhooks sent yet
+ * @param {number} campaignId
+ * @returns {Promise<Object[]>}
+ */
+async function getNewlyFulfilledPledges(campaignId) {
+  return Database.query(
+    `SELECT * FROM pledges 
+     WHERE campaign_id = ? 
+       AND status = 'fulfilled'
+       AND webhook_sent_at IS NULL`,
+    [campaignId]
+  );
+}
+
+/**
+ * Mark webhook as sent for a pledge
+ * @param {string} pledgeId
+ * @returns {Promise<void>}
+ */
+async function markWebhookSent(pledgeId) {
+  await Database.run(
+    `UPDATE pledges SET webhook_sent_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [pledgeId]
   );
 }
 
@@ -122,6 +168,9 @@ module.exports = {
   fulfillAll,
   expireOverdue,
   getExpiredPledges,
+  getNewlyExpiredPledges,
+  getNewlyFulfilledPledges,
+  markWebhookSent,
   findById,
   listAll,
   cancel,

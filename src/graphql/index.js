@@ -23,6 +23,7 @@ const DonationService = require('../services/DonationService');
 const WalletService = require('../services/WalletService');
 const StatsService = require('../services/StatsService');
 const log = require('../utils/log');
+const { parseLanguage, getMessage } = require('../utils/i18n');
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
@@ -76,6 +77,79 @@ const statsService = {
 
 const schema = buildSchema({ donationService, walletService, statsService, pubsub });
 
+// ─── Error sanitization ───────────────────────────────────────────────────────
+
+/** Patterns that might expose sensitive implementation details in production. */
+const SENSITIVE_PATTERNS = [
+  /database|db|sql|query/gi,
+  /file|path|directory|folder/gi,
+  /internal|system|server|infrastructure/gi,
+  /stack|trace|exception/gi,
+  /password|secret|key|token|credential/gi,
+  /localhost|127\.0\.0\.1|internal|private/gi,
+  /\.js|\.json|\.env|config/gi,
+];
+
+/**
+ * Sanitize a GraphQL error before it reaches the client.
+ *
+ * Routes every error through the same sanitization, i18n, and request-ID
+ * injection pipeline that src/middleware/errorHandler.js applies to REST errors,
+ * so both API surfaces present an equally-safe error contract.
+ *
+ * @param {import('graphql').GraphQLError} err   - The original GraphQL error
+ * @param {object}                         reqCtx - Per-request context from createHandler
+ * @returns {import('graphql').GraphQLError}      - Sanitized error safe for the client
+ */
+function sanitizeGraphQLError(err, reqCtx) {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Resolve correlation/request ID from context (injected by requestId middleware)
+  const requestId = reqCtx?.raw?.id || reqCtx?.raw?.headers?.['x-request-id'];
+  const lang = parseLanguage(
+    reqCtx?.raw?.headers?.['accept-language']
+  );
+
+  // Log the original error server-side (never exposes stack to client)
+  log.error('GRAPHQL_ERROR', 'GraphQL error occurred', {
+    requestId,
+    message: err.message,
+    path: err.path,
+    locations: err.locations,
+    stack: err.stack, // server-side only
+  });
+
+  // Translate the message via the i18n catalogue when possible
+  const translated = getMessage('INTERNAL_ERROR', lang);
+
+  let safeMessage = err.message;
+
+  if (isProduction) {
+    // Check whether the original message contains sensitive implementation details
+    const hasSensitiveContent = SENSITIVE_PATTERNS.some((p) => p.test(err.message));
+    if (hasSensitiveContent || !err.originalError) {
+      // Unexpected / unhandled errors → opaque message
+      safeMessage = translated || 'An internal error occurred. Please try again later.';
+    }
+  }
+
+  // Build an extensions bag consistent with the REST error contract
+  const extensions = {
+    ...(err.extensions || {}),
+    requestId,
+    timestamp: new Date().toISOString(),
+  };
+
+  return new err.constructor(safeMessage, {
+    nodes: err.nodes,
+    source: err.source,
+    positions: err.positions,
+    path: err.path,
+    originalError: err.originalError,
+    extensions,
+  });
+}
+
 // ─── HTTP handler ─────────────────────────────────────────────────────────────
 
 /**
@@ -126,6 +200,23 @@ const graphqlHttpHandler = createHandler({
 
     return undefined;
   },
+
+  /**
+   * Sanitize errors before they reach the client.
+   *
+   * Routes every GraphQL error through the same sanitization, i18n, and
+   * request-ID injection pipeline used by src/middleware/errorHandler.js,
+   * so both the REST and GraphQL API surfaces present a consistent,
+   * equally-safe error contract. Raw database errors or stack traces that
+   * bubble up from resolvers are redacted in production.
+   *
+   * @param {import('graphql').GraphQLError} err     - Original error
+   * @param {object}                         reqCtx  - Request context from createHandler
+   * @returns {import('graphql').GraphQLError}       - Sanitized error
+   */
+  formatError(err, reqCtx) {
+    return sanitizeGraphQLError(err, reqCtx);
+  },
 });
 
 // ─── WebSocket subscription server ───────────────────────────────────────────
@@ -169,7 +260,60 @@ function attachSubscriptionServer(httpServer) {
 
         throw new Error('Invalid or expired API key');
       },
-      context: (ctx) => ({ apiKey: ctx.extra?.apiKey ?? ctx.connectionParams }),
+
+      /**
+       * Validate each incoming subscription document before execution.
+       * Applies the same introspection-blocking and depth-limiting rules used
+       * by the HTTP handler, so WebSocket subscribers cannot bypass security
+       * by bypassing the HTTP layer. (#1369)
+       *
+       * @param {object} ctx - graphql-ws context (ctx.extra.apiKey is set after onConnect)
+       * @param {object} msg - The subscribe message containing the document
+       * @param {object} args - Execution args including schema and document
+       * @returns {readonly GraphQLError[] | void} Return errors to reject the subscription
+       */
+      onSubscribe: (ctx, msg, args) => {
+        // args may be undefined in some graphql-ws versions; fall back to parsing msg
+        const document = args?.document;
+        if (!document) return;
+
+        // Standard GraphQL validation
+        const validationErrors = validate(args.schema || schema, document);
+        if (validationErrors.length > 0) return validationErrors;
+
+        // Block introspection in production (#1369)
+        if (IS_PRODUCTION) {
+          for (const def of document.definitions) {
+            const src = def.selectionSet?.selections ?? [];
+            const hasIntrospection = src.some(
+              (s) => s.name?.value === '__schema' || s.name?.value === '__type'
+            );
+            if (hasIntrospection) {
+              return [new Error('GraphQL introspection is disabled in production.')];
+            }
+          }
+        }
+
+        // Enforce query depth limit (#1369)
+        const { valid, depth } = checkDepth(document);
+        if (!valid) {
+          return [
+            new Error(
+              `Query depth ${depth} exceeds maximum allowed depth of ${MAX_QUERY_DEPTH}.`
+            ),
+          ];
+        }
+      },
+
+      /**
+       * Build per-subscription resolver context from the authenticated connection.
+       * Only trust ctx.extra.apiKey — populated by onConnect after successful auth.
+       * Do NOT fall back to raw connectionParams, which are unauthenticated. (#1370)
+       *
+       * @param {object} ctx - graphql-ws context
+       * @returns {{ apiKey: object|null }}
+       */
+      context: (ctx) => ({ apiKey: ctx.extra?.apiKey ?? null }),
     },
     wss
   );

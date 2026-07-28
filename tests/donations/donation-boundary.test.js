@@ -283,7 +283,7 @@ describe('Donation Amount Boundary Tests', () => {
     it('should handle scientific notation (1e-8)', () => {
       const result = validator.validateAmount(1e-8);
       expect(result.valid).toBe(false);
-      expect(result.code).toBe('AMOUNT_BELOW_MINIMUM');
+      expect(result.code).toBe('INVALID_AMOUNT_PRECISION');
     });
 
     it('should handle scientific notation (1e2)', () => {

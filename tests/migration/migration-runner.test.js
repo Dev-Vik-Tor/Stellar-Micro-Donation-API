@@ -9,6 +9,19 @@
 
 const sqlite3 = require('sqlite3').verbose();
 
+jest.mock('../../src/utils/database', () => ({
+  run: jest.fn(),
+  query: jest.fn(),
+  initialize: jest.fn(),
+}));
+jest.mock('../../src/utils/log', () => ({
+  info: jest.fn(),
+  warn: jest.fn(),
+}));
+
+const database = require('../../src/utils/database');
+const { migrationStatus } = require('../../src/utils/migrationRunner');
+
 // ─── Minimal in-memory db adapter ────────────────────────────────────────────
 
 function createInMemoryDb() {
@@ -212,5 +225,18 @@ describe('migrationRunner', () => {
     const { runMigrations } = buildRunner(db, []);
     await runMigrations();
     expect(db.initialize).toHaveBeenCalledTimes(1);
+  });
+
+  test('reports the canonical migration name for a file with a mismatched export name', async () => {
+    const mockDb = createInMemoryDb();
+    database.run.mockImplementation(mockDb.run);
+    database.query.mockImplementation(mockDb.query);
+    database.initialize.mockImplementation(mockDb.initialize);
+
+    const status = await migrationStatus();
+    const entry = status.find((item) => item.file === '013_recurring_donation_executions.js');
+
+    expect(entry).toBeDefined();
+    expect(entry.name).toBe('013_recurring_donation_executions');
   });
 });

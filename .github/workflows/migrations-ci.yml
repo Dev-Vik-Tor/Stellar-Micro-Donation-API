@@ -18,6 +18,12 @@ on:
       - 'scripts/check-migration-ids.js'
       - '.github/workflows/migrations-ci.yml'
 
+# Cancel in-progress runs for the same branch/PR when a new push arrives,
+# so only the latest commit's migration tests consume runner time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   migration-validation:
     runs-on: ubuntu-latest

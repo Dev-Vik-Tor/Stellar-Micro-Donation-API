@@ -40,6 +40,7 @@ const {
   serializeAsset,
 } = require('../utils/stellarAsset');
 const donationEvents = require('../events/donationEvents');
+const Cache = require('../utils/cache');
 
 const DEFAULT_DESTINATION_ASSET = {
   type: 'native',
@@ -47,12 +48,24 @@ const DEFAULT_DESTINATION_ASSET = {
   issuer: null,
 };
 
-const RECIPIENT_ACCOUNT_CACHE_TTL_MS = 60 * 1000;
-const _recipientAccountCache = new Map();
+// Cache constants
+const RECIPIENT_ACCOUNT_CACHE_KEY_PREFIX = 'recipient_account:';
+const POSITIVE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for accounts that exist
+const NEGATIVE_CACHE_TTL_MS = 30 * 1000; // 30 seconds for accounts that don't exist (shorter to allow for funding)
 
 class DonationService {
   constructor(stellarService) {
     this.stellarService = stellarService;
+  }
+
+  /**
+   * Invalidate recipient account cache for a specific public key.
+   * Call this when a wallet is created/funded to prevent stale negative cache.
+   * @param {string} publicKey - Stellar public key to invalidate cache for
+   */
+  static invalidateRecipientAccountCache(publicKey) {
+    const cacheKey = `${RECIPIENT_ACCOUNT_CACHE_KEY_PREFIX}${publicKey}`;
+    Cache.delete(cacheKey);
   }
 
   /**
@@ -68,22 +81,28 @@ class DonationService {
       return;
     }
 
-    const now = Date.now();
-    const cached = _recipientAccountCache.get(publicKey);
-    if (cached && now < cached.expiresAt) {
-      if (!cached.exists) {
+    // Check cache first
+    const cacheKey = `${RECIPIENT_ACCOUNT_CACHE_KEY_PREFIX}${publicKey}`;
+    const cachedResult = Cache.get(cacheKey);
+    
+    if (cachedResult !== null) {
+      // Cache hit - check if result indicates account exists
+      if (cachedResult === false) {
         throw new BusinessLogicError(
           ERROR_CODES.RECIPIENT_ACCOUNT_NOT_FOUND,
           'Recipient account does not exist on the Stellar network. The recipient must fund their account with at least 1 XLM before receiving donations.'
         );
       }
-      return;
+      return; // Account exists
     }
 
+    // Cache miss - check with Stellar network
     const info = await this.stellarService.getAccountInfo(publicKey);
     const exists = !info.notFound && !info.error;
 
-    _recipientAccountCache.set(publicKey, { exists, expiresAt: now + RECIPIENT_ACCOUNT_CACHE_TTL_MS });
+    // Cache the result with appropriate TTL
+    const ttlMs = exists ? POSITIVE_CACHE_TTL_MS : NEGATIVE_CACHE_TTL_MS;
+    Cache.set(cacheKey, exists, ttlMs);
 
     if (!exists) {
       throw new BusinessLogicError(
@@ -219,6 +238,11 @@ class DonationService {
     const sender = await this.getUserById(senderId, 'Sender');
     const receiver = await this.getUserById(receiverId, 'Receiver');
 
+    // Validate sender and receiver are different (prevent self-donation)
+    if (sender.publicKey === receiver.publicKey) {
+      throw new ValidationError('Sender and recipient cannot be the same wallet', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
     log.debug('DONATION_SERVICE', 'Users retrieved', {
       requestId,
       senderFound: !!sender,
@@ -323,17 +347,15 @@ class DonationService {
       return r;
     });
 
-    // Emit donation.created to trigger cache invalidation and other listeners (non-blocking)
-    try {
-      donationEvents.emit(donationEvents.constructor.EVENTS?.CREATED || 'donation.created', {
-        id: dbResult.id,
-        senderId,
-        receiverId,
-        amount,
-      });
-    } catch (err) {
-      log.error('DONATION_SERVICE', 'Failed to emit donation.created event', { error: err.message });
-    }
+    // Emit donation.created to trigger cache invalidation and other listeners (non-blocking).
+    // emitLifecycleEvent() wraps each listener in its own try/catch so a single
+    // failing listener cannot prevent sibling listeners from running.
+    donationEvents.emitLifecycleEvent(donationEvents.constructor.EVENTS?.CREATED || 'donation.created', {
+      id: dbResult.id,
+      senderId,
+      receiverId,
+      amount,
+    });
 
     if (campaign_id) {
       await this.processCampaignContribution(campaign_id, amount).catch(err => {
@@ -1085,6 +1107,54 @@ class DonationService {
   }
 
   /**
+   * Process follow-up actions for batch donations (campaign, matching, corporate matching)
+   * This is a shared helper used by processBatch() to ensure consistent processing
+   * @param {Object} transaction - Created transaction object
+   * @param {number} campaignId - Campaign ID (optional)
+   * @param {string} donorPublicKey - Donor's public key
+   */
+  async processBatchDonationFollowUp(transaction, campaignId, donorPublicKey) {
+    // Process campaign contribution if campaign_id is provided
+    if (campaignId) {
+      await this.processCampaignContribution(campaignId, transaction.amount).catch(err => {
+        log.error('DONATION_SERVICE', 'Failed to update campaign contribution', { error: err.message });
+      });
+    }
+
+    // Process donation matching programs (non-blocking)
+    try {
+      const matchingDonations = await MatchingProgramService.processMatchingDonation({
+        id: transaction.id,
+        amount: parseFloat(transaction.amount),
+        campaign_id: campaignId || null
+      });
+      if (matchingDonations.length > 0) {
+        transaction.matchingDonations = matchingDonations;
+      }
+    } catch (err) {
+      log.error('DONATION_SERVICE', 'Failed to process donation matching', { error: err.message });
+    }
+
+    // Process corporate matching programs (non-blocking)
+    try {
+      // Get sender user ID from public key
+      const senderUser = await Database.get('SELECT id FROM users WHERE publicKey = ?', [donorPublicKey]);
+      if (senderUser) {
+        const corporateMatchingResults = await CorporateMatchingService.processCorporateMatching({
+          id: transaction.id,
+          amount: transaction.amount,
+          senderId: senderUser.id
+        });
+        if (corporateMatchingResults.length > 0) {
+          transaction.corporateMatchingDonations = corporateMatchingResults;
+        }
+      }
+    } catch (err) {
+      log.error('DONATION_SERVICE', 'Failed to process corporate matching', { error: err.message });
+    }
+  }
+
+  /**
    * Update campaign progress with milestone detection and webhook dispatch
    * @param {number} campaignId - Campaign ID
    * @param {number} amount - Donation amount
@@ -1211,7 +1281,8 @@ class DonationService {
   /**
    * Process a batch of donations (up to 100).
    * Donations sharing the same donor are grouped into a single multi-operation Stellar transaction.
-   * @param {Array<{amount, currency, donor, recipient, memo, idempotencyKey}>} donations
+   * If batch transaction fails, falls back to processing donations individually.
+   * @param {Array<{amount, currency, donor, recipient, memo, idempotencyKey, campaign_id?}>} donations
    * @returns {Promise<Array<{index, success, data?, error?}>>}
    */
   async processBatch(donations) {
@@ -1250,11 +1321,13 @@ class DonationService {
 
       if (prepared.length === 0) return;
 
-      // Attempt multi-op Stellar transaction for the whole group
+      // First attempt: multi-op Stellar transaction for the whole group
+      let batchSuccess = false;
+      let stellarResult = null;
+      
       try {
         const sender = await this.getUserById(prepared[0].sanitizedDonor, 'Donor').catch(() => null);
-        let stellarResult = null;
-
+        
         if (sender && sender.encryptedSecret) {
           const secret = encryption.decrypt(sender.encryptedSecret);
           const payments = prepared.map(p => ({
@@ -1263,8 +1336,19 @@ class DonationService {
             memo: p.memo,
           }));
           stellarResult = await this.stellarService.sendBatchDonations(secret, payments);
+          batchSuccess = true;
         }
+      } catch (batchError) {
+        log.warn('DONATION_SERVICE', 'Batch transaction failed, falling back to individual donations', {
+          donor: prepared[0].sanitizedDonor,
+          error: batchError.message,
+          donationCount: prepared.length
+        });
+        batchSuccess = false;
+      }
 
+      // If batch succeeded, process all donations as successful
+      if (batchSuccess) {
         for (const p of prepared) {
           const feeCalc = calculateAnalyticsFee(p.xlmAmount);
           const transaction = Transaction.create({
@@ -1279,12 +1363,69 @@ class DonationService {
             analyticsFeePercentage: feeCalc.feePercentage,
             ...(stellarResult ? { stellarTxId: stellarResult.transactionId, stellarLedger: stellarResult.ledger } : {}),
           });
+          
+          // Process campaign, matching, and corporate matching for batch donations
+          await this.processBatchDonationFollowUp(transaction, p.d.campaign_id, p.sanitizedDonor).catch(err => {
+            log.error('DONATION_SERVICE', 'Failed to process batch donation follow-up', {
+              donationIndex: p.d.index,
+              error: err.message
+            });
+          });
+          
           results[p.d.index] = { index: p.d.index, success: true, data: transaction };
         }
-      } catch (err) {
-        for (const p of prepared) {
-          results[p.d.index] = { index: p.d.index, success: false, error: { code: err.code || 'TRANSACTION_FAILED', message: err.message } };
-        }
+      } else {
+        // Batch failed - fall back to processing donations individually
+        await Promise.all(prepared.map(async (p) => {
+          try {
+            const sender = await this.getUserById(p.sanitizedDonor, 'Donor').catch(() => null);
+            let individualStellarResult = null;
+
+            if (sender && sender.encryptedSecret) {
+              const secret = encryption.decrypt(sender.encryptedSecret);
+              individualStellarResult = await this.stellarService.sendDonation({
+                sourceSecret: secret,
+                destinationPublic: p.sanitizedRecipient,
+                amount: p.xlmAmount.toString(),
+                memo: p.memo
+              });
+            }
+
+            const feeCalc = calculateAnalyticsFee(p.xlmAmount);
+            const transaction = Transaction.create({
+              amount: p.xlmAmount,
+              originalAmount: (p.d.currency || 'XLM').toUpperCase() !== 'XLM' ? p.d.amount : undefined,
+              originalCurrency: (p.d.currency || 'XLM').toUpperCase() !== 'XLM' ? (p.d.currency).toUpperCase() : undefined,
+              donor: p.sanitizedDonor,
+              recipient: p.sanitizedRecipient,
+              memo: p.memo,
+              idempotencyKey: p.d.idempotencyKey,
+              analyticsFee: feeCalc.fee,
+              analyticsFeePercentage: feeCalc.feePercentage,
+              ...(individualStellarResult ? { stellarTxId: individualStellarResult.transactionId, stellarLedger: individualStellarResult.ledger } : {}),
+            });
+            
+            // Process campaign, matching, and corporate matching for individual donations
+            await this.processBatchDonationFollowUp(transaction, p.d.campaign_id, p.sanitizedDonor).catch(err => {
+              log.error('DONATION_SERVICE', 'Failed to process individual donation follow-up', {
+                donationIndex: p.d.index,
+                error: err.message
+              });
+            });
+            
+            results[p.d.index] = { index: p.d.index, success: true, data: transaction };
+          } catch (individualError) {
+            results[p.d.index] = { 
+              index: p.d.index, 
+              success: false, 
+              error: { 
+                code: individualError.code || 'TRANSACTION_FAILED', 
+                message: individualError.message,
+                fallback: true // Indicate this was a fallback attempt
+              } 
+            };
+          }
+        }));
       }
     }));
 
@@ -1753,7 +1894,17 @@ class DonationService {
     if (recipientSecret) {
       secret = recipientSecret;
     } else {
-      const sender = await this.getUserById(donation.senderId || 1, 'Sender');
+      // For non-custodial donations senderId is never populated, so we require
+      // an explicit recipientSecret rather than silently falling back to an
+      // unrelated account (the old `|| 1` fallback was a fund-safety bug).
+      if (!donation.senderId) {
+        throw new ValidationError(
+          'recipientSecret is required to refund this donation: the donation has no ' +
+          'associated custodial sender account. Provide the Stellar secret key of the ' +
+          'original recipient account to authorise the refund.'
+        );
+      }
+      const sender = await this.getUserById(donation.senderId, 'Sender');
       this.validateSenderSecret(sender);
       secret = encryption.decrypt(sender.encryptedSecret);
     }
@@ -1859,14 +2010,26 @@ class DonationService {
       reverseTxId: reverseResult.transactionId
     });
 
+    const actualFee = reverseResult.feePaid !== undefined
+      ? reverseResult.feePaid
+      : (reverseResult.fee !== undefined ? reverseResult.fee : (reverseResult.fee_charged !== undefined ? reverseResult.fee_charged : 100));
+    const networkFeeDeducted = typeof actualFee === 'number' && actualFee >= 100 ? actualFee / STROOPS_PER_XLM : Number(actualFee || 0);
+
+    const analyticsFeePercentage = donation.analyticsFeePercentage !== undefined ? donation.analyticsFeePercentage : 0;
+    const analyticsFee = donation.analyticsFee !== undefined
+      ? donation.analyticsFee
+      : (donation.amount * analyticsFeePercentage) / 100;
+    const refundedAmount = donation.amount - analyticsFee;
+
     return {
       refundId: pendingRecord.id,
       originalDonationId: donationId,
       reverseTxId: reverseResult.transactionId,
       reverseLedger: reverseResult.ledger,
       amount: donation.amount,
-      refundedAmount: donation.amount,
-      networkFeeDeducted: 0,
+      refundedAmount: refundedAmount > 0 ? refundedAmount : donation.amount,
+      analyticsFeeRetained: analyticsFee,
+      networkFeeDeducted,
       reason,
       notes: notes || null,
       refundedAt: new Date().toISOString(),

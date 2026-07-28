@@ -140,6 +140,7 @@ class TaxReceiptService {
         t.xlm_usd_rate,
         t.fair_market_value_usd,
         t.stellar_tx_id,
+        t.status,
         sender.publicKey as donorPublicKey,
         receiver.publicKey as recipientPublicKey
       FROM transactions t
@@ -151,6 +152,16 @@ class TaxReceiptService {
 
     if (!donation) {
       throw new NotFoundError('Donation not found', ERROR_CODES.DONATION_NOT_FOUND);
+    }
+
+    // Check if donation is in a valid state for tax receipt generation
+    const invalidStatuses = ['refunded', 'failed', 'cancelled'];
+    if (donation.status && invalidStatuses.includes(donation.status.toLowerCase())) {
+      throw new ValidationError(
+        `Cannot generate tax receipt for a donation with status "${donation.status}"`,
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
     }
 
     return donation;
@@ -321,10 +332,12 @@ class TaxReceiptService {
         t.xlm_usd_rate,
         t.fair_market_value_usd,
         t.tax_receipt_generated,
+        t.status,
         sender.publicKey as donorPublicKey
       FROM transactions t
       LEFT JOIN users sender ON t.senderId = sender.id
       WHERE 1=1
+      AND t.status NOT IN ('refunded', 'failed', 'cancelled')
     `;
     const params = [];
 

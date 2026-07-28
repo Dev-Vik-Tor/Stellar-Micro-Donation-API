@@ -36,9 +36,12 @@ function escapeField(value) {
     str = String(value);
   }
 
-  // Neutralize formula-injection prefixes
+  // Neutralize formula-injection prefixes (except legitimate negative numbers)
   if (FORMULA_PREFIXES.has(str.charAt(0))) {
-    str = `'${str}`;
+    const isNegativeNumber = /^-\d+(\.\d+)?([eE][+-]?\d+)?$/.test(str);
+    if (!isNegativeNumber) {
+      str = `'${str}`;
+    }
   }
 
   // Quote if the field contains special characters

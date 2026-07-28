@@ -40,8 +40,14 @@ describe('csvSerializer', () => {
       expect(escapeField('+1')).toBe("'+1");
     });
 
-    it('neutralizes - formula prefix', () => {
-      expect(escapeField('-1')).toBe("'-1");
+    it('does not neutralize legitimate negative numbers', () => {
+      expect(escapeField('-1')).toBe('-1');
+      expect(escapeField('-100.5')).toBe('-100.5');
+    });
+
+    it('neutralizes - formula prefix when payload contains injection characters', () => {
+      expect(escapeField('-2+3+cmd|')).toBe("'-2+3+cmd|");
+      expect(escapeField('-SUM(A1:A10)')).toBe("'-SUM(A1:A10)");
     });
 
     it('neutralizes @ formula prefix', () => {

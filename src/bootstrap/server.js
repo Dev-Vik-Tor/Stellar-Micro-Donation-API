@@ -117,9 +117,6 @@ async function startServer(app, overrideServices = {}) {
       next();
     });
 
-    // Attach WebSocket servers immediately after bind
-    attachSubscriptionServer(server);
-    require('../services/websocketService').attach(server);
 
     let cleanupInterval = null;
     let replayCleanupTimer = null;
@@ -132,6 +129,12 @@ async function startServer(app, overrideServices = {}) {
         await runMigrations();
         await initializeApiKeysTable();
         initializeDefaultStore(Database);
+
+        // ── Attach WebSocket servers after migrations and api_keys table are ready ──
+        // This prevents clients from hitting raw database errors (missing tables)
+        // during the brief startup window before the schema is fully initialised.
+        attachSubscriptionServer(server);
+        require('../services/websocketService').attach(server);
 
         const { initializeFeatureFlagsTable, loadFlagsFromEnv } = require('../utils/featureFlags');
         await initializeFeatureFlagsTable();
@@ -331,6 +334,7 @@ async function startServer(app, overrideServices = {}) {
 
         // 7. Stop remaining background services
         reconciliationService.stop();
+        reconcileTotalsJob.stop();
         auditLogRetentionService.stop();
         retentionService.stop();
         transactionSyncScheduler.stop();

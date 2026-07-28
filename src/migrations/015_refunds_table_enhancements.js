@@ -7,7 +7,7 @@
  * - Adds index on idempotency_key for fast duplicate detection
  */
 
-exports.name = '012_refunds_table_enhancements';
+exports.name = '015_refunds_table_enhancements';
 
 exports.up = async (db) => {
   // Ensure refunds table exists

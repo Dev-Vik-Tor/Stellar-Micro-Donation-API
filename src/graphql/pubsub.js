@@ -12,6 +12,13 @@
  * replace with a Redis-backed pubsub without changing the interface.
  */
 
+/**
+ * Maximum number of events buffered per subscriber before the oldest events
+ * are dropped (drop-oldest policy). This prevents a slow or stalled consumer
+ * from causing unbounded server-side memory growth.
+ */
+const MAX_QUEUE_SIZE = 100;
+
 class PubSub {
   constructor() {
     /** @type {Map<string, Set<Function>>} topic → set of listener callbacks */
@@ -49,6 +56,12 @@ class PubSub {
       if (pullQueue.length > 0) {
         pullQueue.shift()({ value: payload, done: false });
       } else {
+        // Enforce the bounded queue: drop the oldest buffered event when the
+        // queue is full so that a slow or stalled subscriber cannot cause
+        // unbounded server-side memory growth (issue #1374).
+        if (pushQueue.length >= MAX_QUEUE_SIZE) {
+          pushQueue.shift(); // drop oldest — drop-oldest policy
+        }
         pushQueue.push(payload);
       }
     };
@@ -124,3 +137,4 @@ pubsub.filteredIterator = function (topic, filter = {}) {
 };
 
 module.exports = pubsub;
+module.exports.MAX_QUEUE_SIZE = MAX_QUEUE_SIZE;

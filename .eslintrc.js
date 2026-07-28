@@ -7,6 +7,49 @@ const hasSecurityPlugin = (() => {
   }
 })();
 
+/**
+ * Files grandfathered from the max-lines rule while they are being decomposed.
+ * As decomposition PRs land, remove entries from this list one by one.
+ * Issue tracking: #1211 (split MockStellarService), #1212 (decompose DonationService),
+ * #1213 (decompose wallet route), #1214 (decompose donation route)
+ *
+ * Issue #1394: This array was previously referenced in the overrides block but
+ * never declared, causing a ReferenceError on config load and breaking all lint
+ * and SAST CI jobs. Declared here to fix that.
+ */
+const GRANDFATHERED_LARGE_FILES = [
+  'src/services/MockStellarService.js',
+  'src/services/DonationService.js',
+  'src/services/RecurringDonationScheduler.js',
+  'src/services/TransactionReconciliationService.js',
+  'src/services/WebhookService.js',
+  'src/services/AuditLogExportService.js',
+  'src/services/StatsService.js',
+  'src/services/LeaderboardStatsService.js',
+  'src/services/ApiKeyUsageService.js',
+  'src/routes/stream.js',
+  'src/routes/transaction.js',
+  'src/routes/campaigns.js',
+  'src/routes/apiKeys.js',
+  'src/routes/assets.js',
+  'src/bootstrap/routes.js',
+  'src/bootstrap/server.js',
+  'src/utils/database.js',
+  'src/utils/tracing.js',
+  'src/middleware/rbac.js',
+  'src/middleware/rateLimiter.js',
+  'tests/donations/donation-routes.test.js',
+  'tests/donations/recurring-donation-scheduling-flexi.test.js',
+  'tests/donations/donation-matching-program.test.js',
+  'tests/misc/input-sanitization-for-xss-and-injection-preve.test.js',
+  'tests/misc/comprehensive-input-validation-error-mes.test.js',
+  'tests/admin/api-key-scoping-finegrained-permiss.test.js',
+  'tests/admin/twofactor-authentication-for-admin-operations.test.js',
+  'tests/security/rbac-authorization-matrix.test.js',
+  'tests/transactions/stellar-transaction-sequence-number-management.test.js',
+  'tests/tracing/distributed-tracing-opentelemetry.test.js',
+];
+
 module.exports = {
   env: {
     node: true,
@@ -87,9 +130,7 @@ module.exports = {
   overrides: [
     {
       // Grandfathered large files: exempt from max-lines while being decomposed.
-      // As decomposition PRs land, remove entries from this list one by one.
-      // Issue tracking: #1211 (split MockStellarService), #1212 (decompose DonationService),
-      // #1213 (decompose wallet route), #1214 (decompose donation route)
+      // See the GRANDFATHERED_LARGE_FILES declaration at the top of this file.
       files: GRANDFATHERED_LARGE_FILES,
       rules: {
         'max-lines': 'off',

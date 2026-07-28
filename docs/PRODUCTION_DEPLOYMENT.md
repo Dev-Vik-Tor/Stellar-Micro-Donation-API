@@ -50,6 +50,14 @@ openssl rand -hex 32 > secrets/jwt_secret.txt
 
 ### 3. Deploy with Docker Compose
 
+> **Note:** The commands below use plain `docker-compose up`.  In this
+> mode the `deploy.resources` block in `docker-compose.prod.yml` is
+> silently ignored by Docker Compose — resource limits and reservations
+> are **not** enforced.  For guaranteed resource enforcement, either use
+> Docker Swarm (`docker stack deploy`) or add `mem_limit` / `cpus` keys
+> directly to the service.  See the [Resource Configuration](#resource-configuration)
+> section for details.
+
 ```bash
 # Start the production deployment
 docker-compose -f docker-compose.prod.yml up -d
@@ -93,13 +101,39 @@ The production deployment uses file-based secret injection. Configure these envi
 
 The production docker-compose applies the following resource limits:
 
+> **⚠️ Swarm-only caveat — read before deploying**
+>
+> The `deploy.resources` block in `docker-compose.prod.yml` is a
+> **Docker Swarm / Docker Stack construct**.  When you deploy with plain
+> `docker-compose up`, Docker Compose silently ignores the entire
+> `deploy.resources` block — neither the limits *nor* the reservations
+> below are applied to the container.  Resource guarantees in that
+> scenario are entirely up to the host OS and Docker daemon defaults.
+>
+> | Deployment command | `deploy.resources` honoured? |
+> |--------------------|------------------------------|
+> | `docker-compose -f docker-compose.prod.yml up -d` | ❌ ignored |
+> | `docker stack deploy -c docker-compose.prod.yml stellar` | ✅ enforced |
+>
+> **Plain `docker-compose up` users:** add top-level `mem_limit` /
+> `cpus` keys directly under the service to get container-level resource
+> enforcement:
+>
+> ```yaml
+> services:
+>   api:
+>     mem_limit: 1g
+>     cpus: '2.0'
+>     # ... rest of the service definition
+> ```
+
 ### CPU
 - **Limit**: 2 CPUs max
-- **Reservation/request**: 1 CPU
+- **Reservation/request**: 1 CPU (Swarm scheduler hint only)
 
 ### Memory
 - **Limit**: 1 GB max
-- **Reservation/request**: 512 MB
+- **Reservation/request**: 512 MB (Swarm scheduler hint only)
 
 Adjust these values based on your expected traffic and infrastructure.
 
@@ -112,14 +146,15 @@ separate functional baseline failure during this run, operators should repeat
 the profile with healthy production-like traffic before reducing these values.
 
 ```yaml
+# Swarm-only — ignored by plain docker-compose up (see caveat above)
 deploy:
   resources:
     limits:
       cpus: '2.0'       # Adjust based on traffic
       memory: 1G        # Adjust based on data size
     reservations:
-      cpus: '1.0'
-      memory: 512M
+      cpus: '1.0'       # Swarm scheduler hint
+      memory: 512M      # Swarm scheduler hint
 ```
 
 ## Graceful Container Termination

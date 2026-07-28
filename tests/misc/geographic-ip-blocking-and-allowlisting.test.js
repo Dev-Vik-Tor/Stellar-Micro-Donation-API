@@ -317,6 +317,18 @@ describe('GeoBlockMiddleware', () => {
       expect(result.block).toBe(false);
       expect(result.reason).toBe(null);
     });
+
+    it('should block when GeoIP is unavailable while geo rules are active', () => {
+      middleware.initialized = false;
+      middleware.lookup = null;
+
+      const result = middleware.shouldBlock('8.8.8.8');
+
+      expect(result.block).toBe(true);
+      expect(result.reason).toBe('geo');
+      expect(result.countryCode).toBe(null);
+      expect(result.matchedRule).toBe(null);
+    });
   });
 
   describe('Middleware Integration', () => {

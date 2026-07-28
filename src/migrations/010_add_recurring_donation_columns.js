@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '008_add_recurring_donation_columns';
+exports.name = '010_add_recurring_donation_columns';
 
 exports.up = async (db) => {
   try {

@@ -37,12 +37,35 @@ services:
     restart: always
     # Allow the 30-second shutdown budget to complete before SIGKILL.
     stop_grace_period: 35s
-    # Resource limits to prevent container resource exhaustion
+    # Resource limits to prevent container resource exhaustion.
+    #
+    # ⚠️  IMPORTANT — deploy.resources is a Docker Swarm / Docker Stack
+    #     construct.  When you start the container with:
+    #
+    #       docker-compose -f docker-compose.prod.yml up -d   (plain Compose)
+    #
+    #     Docker Compose silently ignores the entire deploy.resources block,
+    #     so the limits AND reservations below are NOT enforced.  They only
+    #     take effect when you deploy via Docker Swarm:
+    #
+    #       docker stack deploy -c docker-compose.prod.yml stellar
+    #
+    #     If you are using plain docker-compose up and want actual resource
+    #     enforcement, replace this block with top-level service keys:
+    #
+    #       mem_limit: 1g
+    #       cpus: '2.0'
+    #
+    #     These plain-Compose keys ARE honoured by `docker-compose up`.
+    #
+    # See: https://docs.docker.com/compose/compose-file/deploy/#resources
     deploy:
       resources:
         limits:
           cpus: '2.0'
           memory: 1G
+        # The reservation below is a "guaranteed minimum" scheduler hint.
+        # It is Swarm-only and is silently ignored by plain docker-compose up.
         reservations:
           cpus: '1.0'
           memory: 512M

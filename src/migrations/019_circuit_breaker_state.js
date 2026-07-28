@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '013_circuit_breaker_state';
+exports.name = '019_circuit_breaker_state';
 
 exports.up = async (db) => {
   await db.run(`

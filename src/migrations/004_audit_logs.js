@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '003_audit_logs';
+exports.name = '004_audit_logs';
 
 exports.up = async (db) => {
   await db.run(`

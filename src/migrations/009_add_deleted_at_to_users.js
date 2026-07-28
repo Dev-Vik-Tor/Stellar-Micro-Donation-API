@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '007_add_deleted_at_to_users';
+exports.name = '009_add_deleted_at_to_users';
 
 exports.up = async (db) => {
   try {

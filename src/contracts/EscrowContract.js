@@ -9,7 +9,7 @@ class EscrowContract {
    * @param {number} goalAmount - The target amount required before funds can be released
    */
   constructor(goalAmount) {
-    if (typeof goalAmount !== 'number' || goalAmount <= 0) {
+    if (!Number.isFinite(goalAmount) || goalAmount <= 0) {
       throw new Error('goalAmount must be positive');
     }
     this._goalAmount = goalAmount;
@@ -41,7 +41,7 @@ class EscrowContract {
    * @returns {{ recipientId: string, amount: number, events: ContractEvent[] }}
    */
   release(recipientId) {
-    if (this._balance < this._goalAmount) {
+    if (!Number.isFinite(this._goalAmount) || this._balance < this._goalAmount) {
       throw new Error('Goal not yet reached');
     }
     const amount = this._balance;

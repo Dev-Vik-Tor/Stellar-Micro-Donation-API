@@ -138,6 +138,24 @@ describe('RoundRobinStrategy', () => {
     expect(strategy.select(pool, { currentIndex: 0 }).excludedIds).toEqual([]);
   });
 
+  it('wraps to 0 when currentIndex is out of bounds (pool shrank)', () => {
+    // Simulate a pool that had 5 members at last rotation but now only has 3.
+    const shrunkPool = [{ id: 'A' }, { id: 'B' }, { id: 'C' }];
+    // A stale index of 4 would crash without the fix.
+    expect(strategy.select(shrunkPool, { currentIndex: 4 }).selectedId).toBe('A');
+    expect(strategy.select(shrunkPool, { currentIndex: 3 }).selectedId).toBe('A');
+    // Indices that are still in range should work unchanged.
+    expect(strategy.select(shrunkPool, { currentIndex: 2 }).selectedId).toBe('C');
+  });
+
+  it('wraps to 0 when pool is smaller than stored index (edge: single recipient)', () => {
+    const singlePool = [{ id: 'Only' }];
+    // Stale index of 5 should wrap to 0.
+    expect(strategy.select(singlePool, { currentIndex: 5 }).selectedId).toBe('Only');
+    // Index 0 still works.
+    expect(strategy.select(singlePool, { currentIndex: 0 }).selectedId).toBe('Only');
+  });
+
   it('distributes evenly across recipients via DonationRouter', async () => {
     await Database.initialize();
     await ensureRoutingTables();

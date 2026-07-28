@@ -19,7 +19,55 @@ const {
   GraphQLList,
   GraphQLNonNull,
   GraphQLInputObjectType,
+  GraphQLError,
 } = require('graphql');
+
+const { hasPermission } = require('../models/permissions');
+
+// ─── Pagination constants ─────────────────────────────────────────────────────
+
+/** Default number of records returned when the client supplies no limit. */
+const DEFAULT_PAGE_LIMIT = 20;
+
+/** Hard upper cap on client-supplied limit arguments to prevent resource exhaustion. (#1372) */
+const MAX_PAGE_LIMIT = 100;
+
+/**
+ * Clamp a client-supplied limit value within [1, MAX_PAGE_LIMIT].
+ * If no limit is provided, return DEFAULT_PAGE_LIMIT.
+ * @param {number|null|undefined} clientLimit
+ * @returns {number}
+ */
+function clampLimit(clientLimit) {
+  if (clientLimit == null) return DEFAULT_PAGE_LIMIT;
+  return Math.min(Math.max(1, clientLimit), MAX_PAGE_LIMIT);
+}
+
+// ─── RBAC helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Assert that the GraphQL context includes an authenticated API key with the
+ * required permission.  Mirrors the checkPermission() Express middleware used
+ * by the equivalent REST routes. (#1371)
+ *
+ * @param {{ apiKey?: { role?: string } } | null} context - GraphQL resolver context
+ * @param {string} permission - Required permission string (e.g. 'donations:create')
+ * @throws {GraphQLError} UNAUTHENTICATED if no apiKey; FORBIDDEN if insufficient role
+ */
+function assertPermission(context, permission) {
+  if (!context || !context.apiKey) {
+    throw new GraphQLError('Authentication required.', {
+      extensions: { code: 'UNAUTHENTICATED' },
+    });
+  }
+
+  const role = context.apiKey.role || 'guest';
+  if (!hasPermission(role, permission)) {
+    throw new GraphQLError(`Insufficient permissions. Required: ${permission}`, {
+      extensions: { code: 'FORBIDDEN' },
+    });
+  }
+}
 
 // ─── Scalar / shared types ────────────────────────────────────────────────────
 
@@ -173,11 +221,26 @@ function buildQueryType({ donationService, walletService, statsService }) {
     fields: () => ({
       /**
        * Fetch all donations.
+       * Accepts optional limit/offset for pagination. Defaults to DEFAULT_PAGE_LIMIT
+       * records; hard-capped at MAX_PAGE_LIMIT to prevent resource exhaustion. (#1372)
+       * @param {object} _ - Parent (unused)
+       * @param {object} args
+       * @param {number} [args.limit] - Max records to return (default 20, max 100)
+       * @param {number} [args.offset] - Number of records to skip
        * @returns {Promise<Array>} List of donation records
        */
       donations: {
         type: new GraphQLList(DonationType),
-        resolve: () => donationService.getAllDonations(),
+        args: {
+          limit: { type: GraphQLInt, defaultValue: DEFAULT_PAGE_LIMIT },
+          offset: { type: GraphQLInt, defaultValue: 0 },
+        },
+        resolve: async (_, { limit, offset }) => {
+          const safeLimit = clampLimit(limit);
+          const safeOffset = Math.max(0, offset ?? 0);
+          const all = await donationService.getAllDonations();
+          return all.slice(safeOffset, safeOffset + safeLimit);
+        },
       },
 
       /**
@@ -195,24 +258,41 @@ function buildQueryType({ donationService, walletService, statsService }) {
 
       /**
        * Fetch recent donations.
+       * Defaults to DEFAULT_PAGE_LIMIT; hard-capped at MAX_PAGE_LIMIT to prevent
+       * resource exhaustion. (#1372)
        * @param {object} _ - Parent (unused)
        * @param {object} args
-       * @param {number} [args.limit=10] - Max records to return
+       * @param {number} [args.limit] - Max records to return (default 20, max 100)
        * @returns {Promise<Array>} Recent donation records
        */
       recentDonations: {
         type: new GraphQLList(DonationType),
-        args: { limit: { type: GraphQLInt, defaultValue: 10 } },
-        resolve: (_, { limit }) => donationService.getRecentDonations(limit),
+        args: { limit: { type: GraphQLInt, defaultValue: DEFAULT_PAGE_LIMIT } },
+        resolve: (_, { limit }) => donationService.getRecentDonations(clampLimit(limit)),
       },
 
       /**
        * Fetch all wallets.
+       * Accepts optional limit/offset for pagination. Defaults to DEFAULT_PAGE_LIMIT
+       * records; hard-capped at MAX_PAGE_LIMIT to prevent resource exhaustion. (#1372)
+       * @param {object} _ - Parent (unused)
+       * @param {object} args
+       * @param {number} [args.limit] - Max records to return (default 20, max 100)
+       * @param {number} [args.offset] - Number of records to skip
        * @returns {Array} List of wallet records
        */
       wallets: {
         type: new GraphQLList(WalletType),
-        resolve: () => walletService.getAllWallets(),
+        args: {
+          limit: { type: GraphQLInt, defaultValue: DEFAULT_PAGE_LIMIT },
+          offset: { type: GraphQLInt, defaultValue: 0 },
+        },
+        resolve: (_, { limit, offset }) => {
+          const safeLimit = clampLimit(limit);
+          const safeOffset = Math.max(0, offset ?? 0);
+          const all = walletService.getAllWallets();
+          return all.slice(safeOffset, safeOffset + safeLimit);
+        },
       },
 
       /**
@@ -282,15 +362,18 @@ function buildMutationType({ donationService, walletService }) {
     fields: () => ({
       /**
        * Create a new donation record.
+       * Requires donations:create permission (matching REST POST /donations). (#1371)
        * @param {object} _ - Parent (unused)
        * @param {object} args
        * @param {object} args.input - CreateDonationInput fields
+       * @param {object} context - GraphQL context; must contain authenticated apiKey
        * @returns {Promise<object>} { success, donation, message }
        */
       createDonation: {
         type: CreateDonationResultType,
         args: { input: { type: new GraphQLNonNull(CreateDonationInput) } },
-        resolve: async (_, { input }) => {
+        resolve: async (_, { input }, context) => {
+          assertPermission(context, 'donations:create');
           const donation = await donationService.createDonationRecord(input);
           return { success: true, donation };
         },
@@ -298,10 +381,12 @@ function buildMutationType({ donationService, walletService }) {
 
       /**
        * Update the status of an existing donation.
+       * Requires donations:update permission (matching REST PATCH /donations/:id/status). (#1371)
        * @param {object} _ - Parent (unused)
        * @param {object} args
        * @param {number} args.id - Donation ID
        * @param {string} args.status - New status value
+       * @param {object} context - GraphQL context; must contain authenticated apiKey
        * @returns {object} { success, donation }
        */
       updateDonationStatus: {
@@ -310,7 +395,8 @@ function buildMutationType({ donationService, walletService }) {
           id: { type: new GraphQLNonNull(GraphQLInt) },
           status: { type: new GraphQLNonNull(GraphQLString) },
         },
-        resolve: (_, { id, status }) => {
+        resolve: (_, { id, status }, context) => {
+          assertPermission(context, 'donations:update');
           const donation = donationService.updateDonationStatus(id, status);
           return { success: true, donation };
         },
@@ -318,11 +404,13 @@ function buildMutationType({ donationService, walletService }) {
 
       /**
        * Create a new wallet record.
+       * Requires wallets:create permission (matching REST POST /wallets). (#1371)
        * @param {object} _ - Parent (unused)
        * @param {object} args
        * @param {string} args.address - Stellar public key
        * @param {string} [args.label] - Optional label
        * @param {string} [args.ownerName] - Optional owner name
+       * @param {object} context - GraphQL context; must contain authenticated apiKey
        * @returns {Promise<object>} { success, wallet }
        */
       createWallet: {
@@ -332,7 +420,8 @@ function buildMutationType({ donationService, walletService }) {
           label: { type: GraphQLString },
           ownerName: { type: GraphQLString },
         },
-        resolve: async (_, args) => {
+        resolve: async (_, args, context) => {
+          assertPermission(context, 'wallets:create');
           const wallet = await walletService.createWallet(args);
           return { success: true, wallet };
         },

@@ -35,7 +35,23 @@ describe('POST /admin/corporate-matching/employers', () => {
   });
 
   it('rejects invalid matchRatio', async () => {
-    const res = await addEmployer({ matchRatio: 5 });
+    // Test with value outside valid range (0.01-10)
+    const res = await addEmployer({ matchRatio: 15 });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects zero matchRatio', async () => {
+    const res = await addEmployer({ matchRatio: 0 });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects negative matchRatio', async () => {
+    const res = await addEmployer({ matchRatio: -1 });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects non-numeric matchRatio', async () => {
+    const res = await addEmployer({ matchRatio: 'not-a-number' });
     expect(res.status).toBe(400);
   });
 
@@ -49,6 +65,26 @@ describe('POST /admin/corporate-matching/employers', () => {
     const res = await addEmployer({ matchRatio: 3, annualCap: 2000 });
     expect(res.status).toBe(201);
     expect(res.body.data.matchRatio).toBe(3);
+  });
+
+  it('accepts fractional matchRatio', async () => {
+    const res = await addEmployer({ matchRatio: 0.5 });
+    expect(res.status).toBe(201);
+    expect(res.body.data.matchRatio).toBe(0.5);
+  });
+
+  it('calculates correct match with fractional ratio', async () => {
+    // Add employer with 0.5x match ratio
+    await addEmployer({ matchRatio: 0.5 });
+    
+    // Submit a claim
+    const res = await request(app)
+      .post('/corporate-matching/claim')
+      .send({ donorId: 'donor1', employerId: 'acme', donationAmount: 100 });
+    
+    expect(res.status).toBe(201);
+    // 100 * 0.5 = 50
+    expect(res.body.data.matchAmount).toBe(50);
   });
 });
 

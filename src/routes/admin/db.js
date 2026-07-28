@@ -59,11 +59,11 @@ function parseLimit(rawLimit) {
 }
 
 /**
- * Sanitize SQL by replacing parameter values with ? placeholders.
+ * Sanitize SQL by folding bound parameter values into the raw SQL string.
  *
- * @param {string} sql - SQL statement
- * @param {Array} params - Query parameters
- * @returns {string} Sanitized SQL
+ * @param {string} sql - SQL statement with ? placeholders
+ * @param {Array} params - Bound query parameters
+ * @returns {string} Sanitized SQL with parameters substituted
  */
 function sanitizeSql(sql, params = []) {
   if (!params || params.length === 0) {
@@ -72,8 +72,16 @@ function sanitizeSql(sql, params = []) {
 
   let sanitized = sql;
   for (let i = 0; i < params.length; i++) {
-    // Replace first occurrence of ? with placeholder
-    sanitized = sanitized.replace('?', '?');
+    const val = params[i];
+    let formattedVal;
+    if (val === null || val === undefined) {
+      formattedVal = 'NULL';
+    } else if (typeof val === 'number' || typeof val === 'boolean') {
+      formattedVal = String(val);
+    } else {
+      formattedVal = `'${String(val).replace(/'/g, "''")}'`;
+    }
+    sanitized = sanitized.replace('?', formattedVal);
   }
   return sanitized;
 }
@@ -430,3 +438,4 @@ router.get('/integrity-check/:jobId', checkPermission(PERMISSIONS.ADMIN_ALL), (r
 });
 
 module.exports = router;
+module.exports.sanitizeSql = sanitizeSql;

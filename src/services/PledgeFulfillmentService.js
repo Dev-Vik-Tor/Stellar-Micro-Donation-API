@@ -60,7 +60,13 @@ async function fulfillSinglePledge(pledgeOrId) {
   );
 
   const updated = await Pledge.findById(pledge.id);
-  WebhookService.deliver('pledge.fulfilled', { pledge: updated }).catch(() => {});
+  try {
+    await WebhookService.deliver('pledge.fulfilled', { pledge: updated });
+    await Pledge.markWebhookSent(updated.id);
+  } catch (error) {
+    log.error('PLEDGE', `Failed to deliver webhook for pledge ${updated.id}: ${error.message}`);
+    // Don't mark as sent if delivery failed — checkAndFulfill retries it later.
+  }
   return { success: true, pledge: updated };
 }
 
@@ -92,6 +98,19 @@ async function checkAndFulfill(campaignId) {
     if (res.success) count++;
   }
 
+  // Retry webhook delivery for any previously fulfilled pledges whose webhook
+  // delivery failed earlier (still no webhook_sent_at).
+  const newlyFulfilled = await Pledge.getNewlyFulfilledPledges(campaignId);
+  for (const pledge of newlyFulfilled) {
+    try {
+      await WebhookService.deliver('pledge.fulfilled', { pledge });
+      await Pledge.markWebhookSent(pledge.id);
+    } catch (error) {
+      log.error('PLEDGE', `Failed to deliver webhook for pledge ${pledge.id}: ${error.message}`);
+      // Don't mark as sent if delivery failed
+    }
+  }
+
   log.info('PLEDGE', `Fulfilled ${count} pledges for campaign ${campaignId}`);
   return { fulfilled: count };
 }
@@ -107,11 +126,21 @@ async function expireOverdue(now = new Date().toISOString()) {
   const changed = await Pledge.expireOverdue(now);
 
   if (changed > 0) {
-    const expired = await Pledge.getExpiredPledges(now);
-    for (const pledge of expired) {
-      WebhookService.deliver('pledge.expired', { pledge }).catch(() => {});
+    // Get only newly expired pledges (those without webhook_sent_at)
+    const newlyExpired = await Pledge.getNewlyExpiredPledges(now);
+    
+    // Send webhooks and mark them as sent
+    for (const pledge of newlyExpired) {
+      try {
+        await WebhookService.deliver('pledge.expired', { pledge });
+        await Pledge.markWebhookSent(pledge.id);
+      } catch (error) {
+        log.error('PLEDGE', `Failed to deliver webhook for expired pledge ${pledge.id}: ${error.message}`);
+        // Don't mark as sent if delivery failed
+      }
     }
-    log.info('PLEDGE', `Expired ${changed} overdue pledges`);
+    
+    log.info('PLEDGE', `Expired ${changed} overdue pledges, sent ${newlyExpired.length} webhooks`);
   }
 
   return { expired: changed };

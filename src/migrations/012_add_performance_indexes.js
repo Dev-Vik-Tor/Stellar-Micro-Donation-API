@@ -9,7 +9,7 @@
  * - api_keys(key_hash)                             — API key validation (idempotent, may already exist)
  */
 
-exports.name = '010_add_performance_indexes';
+exports.name = '012_add_performance_indexes';
 
 exports.up = async (db) => {
   await db.run(`
