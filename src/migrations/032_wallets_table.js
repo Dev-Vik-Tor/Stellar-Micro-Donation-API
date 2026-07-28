@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '018_wallets_table';
+exports.name = '032_wallets_table';
 
 exports.up = async (db) => {
   await db.run(`

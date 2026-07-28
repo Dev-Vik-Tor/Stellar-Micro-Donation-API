@@ -9,7 +9,7 @@
 
 const STROOPS_PER_XLM = 10_000_000;
 
-exports.name = '029_pledges_amount_stroops';
+exports.name = '038_pledges_amount_stroops';
 
 exports.up = async (db) => {
   try {

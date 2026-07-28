@@ -4,7 +4,7 @@
 // It stores the full donation record as a JSON blob alongside indexed columns
 // for efficient querying, avoiding any float coercion of stroop amounts.
 
-exports.name = '019_donations_store';
+exports.name = '033_donations_store';
 
 exports.up = async (db) => {
   await db.run(`

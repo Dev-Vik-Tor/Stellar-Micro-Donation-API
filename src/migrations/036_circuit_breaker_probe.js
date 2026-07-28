@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '025_circuit_breaker_probe';
+exports.name = '036_circuit_breaker_probe';
 
 exports.up = async (db) => {
   // Add probeHolder for cross-instance half-open probe coordination.

@@ -7,7 +7,7 @@
  * (fulfilled or expired) to prevent duplicate webhook deliveries.
  */
 
-exports.name = '029_pledge_webhook_sent_at';
+exports.name = '037_pledge_webhook_sent_at';
 
 exports.up = async (db) => {
   // Add webhook_sent_at column only if missing

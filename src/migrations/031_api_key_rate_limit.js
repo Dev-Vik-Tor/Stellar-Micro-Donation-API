@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '018_api_key_rate_limit';
+exports.name = '031_api_key_rate_limit';
 
 exports.up = async (db) => {
   await db.run(`
