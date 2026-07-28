@@ -56,7 +56,7 @@ in XLM in environment variables and converted to stroops at startup.
 
 **Follow-on tasks:**
 - [x] Add `xlmToStroops` / `stroopsToXlm` helpers to `src/utils/stellarUtils.js`
-- [x] Database migration to ensure all `amount` columns are `INTEGER`
+- [ ] Database migration to ensure all `amount` columns are `INTEGER`
 - [ ] Linting rule or code-review checklist entry to catch direct floating-point
   amount comparisons
 
