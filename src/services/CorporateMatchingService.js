@@ -16,7 +16,9 @@ class CorporateMatchingService {
 
   async addEmployer(employerId, name, matchRatio, annualCap) {
     if (!employerId || !name) throw new Error('employerId and name are required');
-    if (![1, 2, 3].includes(matchRatio)) throw new Error('matchRatio must be 1, 2, or 3');
+    if (typeof matchRatio !== 'number' || matchRatio <= 0 || matchRatio > 10) {
+      throw new Error('matchRatio must be a positive number between 0.01 and 10');
+    }
     if (!annualCap || annualCap <= 0) throw new Error('annualCap must be a positive number');
 
     const addedAt = new Date().toISOString();
