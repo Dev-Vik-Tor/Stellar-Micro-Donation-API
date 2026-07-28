@@ -1753,7 +1753,17 @@ class DonationService {
     if (recipientSecret) {
       secret = recipientSecret;
     } else {
-      const sender = await this.getUserById(donation.senderId || 1, 'Sender');
+      // For non-custodial donations senderId is never populated, so we require
+      // an explicit recipientSecret rather than silently falling back to an
+      // unrelated account (the old `|| 1` fallback was a fund-safety bug).
+      if (!donation.senderId) {
+        throw new ValidationError(
+          'recipientSecret is required to refund this donation: the donation has no ' +
+          'associated custodial sender account. Provide the Stellar secret key of the ' +
+          'original recipient account to authorise the refund.'
+        );
+      }
+      const sender = await this.getUserById(donation.senderId, 'Sender');
       this.validateSenderSecret(sender);
       secret = encryption.decrypt(sender.encryptedSecret);
     }

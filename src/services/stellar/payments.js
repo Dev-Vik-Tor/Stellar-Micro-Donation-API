@@ -405,6 +405,74 @@ class StellarPayments {
     }, 'verifyTransaction');
   }
 
+  async sendPayment(sourcePublicKey, destinationPublic, amount, memo = '') {
+    return StellarErrorHandler.wrap(async () => {
+      if (!sourcePublicKey || typeof sourcePublicKey !== 'string') {
+        const { ValidationError } = require('../../utils/errors');
+        throw new ValidationError('sourcePublicKey is required');
+      }
+      if (!destinationPublic || typeof destinationPublic !== 'string') {
+        const { ValidationError } = require('../../utils/errors');
+        throw new ValidationError('destinationPublic is required');
+      }
+      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+        const { ValidationError } = require('../../utils/errors');
+        throw new ValidationError('amount must be a positive number');
+      }
+
+      const sourceKeypair = this.service.serviceSecretKey
+        ? StellarSdk.Keypair.fromSecret(this.service.serviceSecretKey)
+        : null;
+
+      if (sourceKeypair && sourceKeypair.publicKey() === sourcePublicKey) {
+        return this.sendDonation({
+          sourceSecret: this.service.serviceSecretKey,
+          destinationPublic,
+          amount: amount.toString(),
+          memo,
+        });
+      }
+
+      const sourceAccount = await this.service._executeWithRetry(
+        () => this.service.server.loadAccount(sourcePublicKey),
+        'loadAccountForSendPayment'
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: this.service.baseFee,
+        networkPassphrase: this.service.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.payment({
+          destination: destinationPublic,
+          asset: StellarSdk.Asset.native(),
+          amount: amount.toString(),
+        }))
+        .setTimeout(30);
+
+      if (memo) {
+        transaction.addMemo(StellarSdk.Memo.text(memo));
+      }
+
+      const builtTx = transaction.build();
+      if (sourceKeypair) {
+        builtTx.sign(sourceKeypair);
+      } else {
+        const { BusinessLogicError, ERROR_CODES } = require('../../utils/errors');
+        throw new BusinessLogicError(
+          ERROR_CODES.TRANSACTION_FAILED,
+          'sendPayment requires a serviceSecretKey to sign the transaction. ' +
+          'Provide serviceSecretKey in the StellarService config or use sendDonation with an explicit sourceSecret.'
+        );
+      }
+
+      const result = await this.service._submitTransactionWithNetworkSafety(builtTx);
+      return {
+        hash: result.hash,
+        ledger: result.ledger,
+      };
+    }, 'sendPayment');
+  }
+
   async pathPaymentStrictSend(sourceSecret, sendAsset, sendAmount, destPublicKey, destAsset, minDestAmount, options = {}) {
     return StellarErrorHandler.wrap(async () => {
       const route = await this.discoverBestPath({ sourceAsset: sendAsset, sourceAmount: sendAmount, destAsset });

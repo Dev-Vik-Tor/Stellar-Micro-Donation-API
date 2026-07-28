@@ -7,6 +7,7 @@
  * @module MultiSigService
  */
 
+const StellarSdk = require('stellar-sdk');
 const Database = require('../utils/database');
 const log = require('../utils/log');
 const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
@@ -102,6 +103,14 @@ class MultiSigService {
    * Add a signature to a pending multi-sig transaction.
    * Auto-submits to Stellar when the threshold is reached.
    *
+   * The submitted `signed_xdr` is parsed and cryptographically verified to
+   * confirm it actually contains a valid signature from the claimed `signer`
+   * public key before the signature is stored.  Garbage or wrong-key XDR is
+   * rejected outright so a malicious or buggy client cannot:
+   *   (a) permanently consume a legitimate signer's one-time slot, or
+   *   (b) trigger an auto-submit with invalid signatures that will fail on
+   *       Horizon and leave the multisig workflow in an unrecoverable state.
+   *
    * @param {number} id          - Multi-sig transaction id
    * @param {string} signer      - Public key of the signer
    * @param {string} signed_xdr  - Base-64 XDR of the transaction signed by `signer`
@@ -133,6 +142,13 @@ class MultiSigService {
       throw new ValidationError(`${signer} has already signed this transaction`);
     }
 
+    // ── Cryptographic signature verification ──────────────────────────────────
+    // Parse the submitted XDR envelope and confirm that it contains at least
+    // one signature that is cryptographically valid under the claimed signer's
+    // public key.  This prevents storing garbage XDR or XDR signed by a
+    // different (possibly attacker-controlled) key.
+    this._verifySignerXdr(signer, signed_xdr, tx.network_passphrase);
+
     const updatedSignatures = [...tx.collected_signatures, { signer, signed_xdr }];
     const thresholdMet = updatedSignatures.length >= tx.required_signers;
     const newStatus = thresholdMet ? 'complete' : 'pending';
@@ -157,6 +173,67 @@ class MultiSigService {
     }
 
     return this.getTransaction(id);
+  }
+
+  /**
+   * Verify that `signed_xdr` contains a valid signature produced by the
+   * Stellar keypair corresponding to `signerPublicKey`.
+   *
+   * Approach:
+   *   1. Decode the XDR envelope into a Transaction object.
+   *   2. Re-derive the transaction hash (the payload that was signed).
+   *   3. Scan every DecoratedSignature in the envelope and check whether
+   *      the hint matches the signer's key AND the ed25519 signature
+   *      verifies against the hash under that key.
+   *
+   * A ValidationError is thrown if:
+   *   - The XDR cannot be parsed (malformed/garbage input).
+   *   - No valid signature from the claimed key is found in the envelope.
+   *
+   * @private
+   * @param {string} signerPublicKey   - Stellar G... public key of the claimed signer
+   * @param {string} signed_xdr        - Base-64 encoded signed transaction envelope
+   * @param {string} networkPassphrase - Stellar network passphrase (used to derive the tx hash)
+   */
+  _verifySignerXdr(signerPublicKey, signed_xdr, networkPassphrase) {
+    let transaction;
+    try {
+      transaction = StellarSdk.TransactionBuilder.fromXDR(signed_xdr, networkPassphrase);
+    } catch (parseErr) {
+      throw new ValidationError(
+        `signed_xdr could not be parsed as a valid Stellar transaction: ${parseErr.message}`
+      );
+    }
+
+    let signerKeypair;
+    try {
+      signerKeypair = StellarSdk.Keypair.fromPublicKey(signerPublicKey);
+    } catch {
+      throw new ValidationError(`signer is not a valid Stellar public key: ${signerPublicKey}`);
+    }
+
+    // The transaction hash is the exact byte sequence that was signed.
+    const txHash = transaction.hash();
+    // The hint is the last 4 bytes of the signer's raw public key.
+    const signerHint = signerKeypair.signatureHint();
+
+    const signatures = transaction.signatures; // Array of xdr.DecoratedSignature
+    const matched = signatures.some((decoratedSig) => {
+      // Quick pre-filter by hint to skip obviously unrelated signatures cheaply.
+      if (!decoratedSig.hint().equals(signerHint)) return false;
+      try {
+        return signerKeypair.verify(txHash, decoratedSig.signature());
+      } catch {
+        return false;
+      }
+    });
+
+    if (!matched) {
+      throw new ValidationError(
+        `signed_xdr does not contain a valid signature from the claimed signer ${signerPublicKey}. ` +
+        'Ensure the XDR was signed with the correct keypair before submitting.'
+      );
+    }
   }
 
   /**

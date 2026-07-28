@@ -2,25 +2,56 @@
  * CrowdfundingService
  *
  * Manages all-or-nothing crowdfunding campaigns:
- * - Holds donations in escrow until goal is met or deadline passes
- * - Releases funds to recipient on goal completion
- * - Refunds all donors if deadline passes without reaching goal
- * - Keep-what-you-raise campaigns pass through unchanged
+ * - Collects pledged XLM from donor wallets into a service-controlled escrow
+ *   account on the Stellar network.
+ * - Releases escrowed funds to the campaign recipient when the goal is met.
+ * - Refunds every donor when the deadline passes without reaching the goal.
+ * - Keep-what-you-raise campaigns pass through unchanged.
  */
 
 const Database = require('../utils/database');
 const log = require('../utils/log');
 
 /**
- * Pledge a donation to an all-or-nothing campaign (held in escrow).
+ * Lazily resolve the Stellar service so this module can be required in test
+ * environments that set up the service container before calling pledge/settle.
+ * Pass an explicit `stellarService` argument to override (useful in tests).
  *
- * @param {number} campaignId - Campaign ID
- * @param {number} donorId - Donor user ID
- * @param {number} amount - Donation amount in XLM
- * @param {string} [idempotencyKey] - Optional idempotency key
- * @returns {Promise<{pledgeId: number, campaignId: number, donorId: number, amount: number, status: string}>}
+ * @returns {Object} StellarService or MockStellarService instance
  */
-async function pledge(campaignId, donorId, amount) {
+function getDefaultStellarService() {
+  const { getStellarService } = require('../config/stellar');
+  return getStellarService();
+}
+
+/**
+ * Pledge a donation to an all-or-nothing campaign.
+ *
+ * In addition to recording the pledge in the database the function submits a
+ * real XLM payment from the donor's account to the service escrow account on
+ * the Stellar network.  The on-chain transaction hash is stored so that the
+ * pledge can be cryptographically verified and the on-chain transfer can be
+ * reversed during a refund settlement.
+ *
+ * @param {number} campaignId       - Campaign ID
+ * @param {number} donorId          - Donor user ID (must have a publicKey in users table)
+ * @param {number} amount           - Donation amount in XLM
+ * @param {Object} [options]
+ * @param {string} [options.donorSecret]       - Donor's Stellar secret key (required for
+ *                                               non-mock environments to sign the pledge tx)
+ * @param {string} [options.escrowPublicKey]   - Override for the escrow destination public key.
+ *                                               Defaults to SERVICE_SECRET_KEY-derived key.
+ * @param {Object} [options.stellarService]    - Stellar service override (for testing)
+ * @returns {Promise<{pledgeId: number, campaignId: number, donorId: number, amount: number,
+ *                    status: string, stellarTxHash: string|null}>}
+ */
+async function pledge(campaignId, donorId, amount, options = {}) {
+  const {
+    donorSecret,
+    escrowPublicKey: escrowOverride,
+    stellarService: svcOverride,
+  } = options;
+
   const campaign = await Database.get(
     'SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL',
     [campaignId]
@@ -37,30 +68,120 @@ async function pledge(campaignId, donorId, amount) {
     throw Object.assign(new Error('Campaign deadline has passed'), { status: 400 });
   }
 
+  // Resolve the donor's public key so we can identify the source account.
+  const donor = await Database.get('SELECT * FROM users WHERE id = ?', [donorId]);
+  if (!donor) throw Object.assign(new Error('Donor not found'), { status: 404 });
+
+  // Determine the escrow destination on Stellar.
+  const stellarService = svcOverride || getDefaultStellarService();
+
+  let escrowPublicKey = escrowOverride;
+  if (!escrowPublicKey) {
+    const StellarSdk = require('stellar-sdk');
+    const serviceSecret = process.env.SERVICE_SECRET_KEY;
+    if (serviceSecret) {
+      escrowPublicKey = StellarSdk.Keypair.fromSecret(serviceSecret).publicKey();
+    }
+  }
+
+  // Submit the Stellar payment to move funds from the donor into escrow.
+  let stellarTxHash = null;
+  if (escrowPublicKey) {
+    const sourcePublicKey = donor.publicKey;
+    const sourceSecret = donorSecret;
+
+    if (sourceSecret) {
+      // Donor provided their secret key: sign and submit the pledge payment.
+      const result = await stellarService.sendDonation({
+        sourceSecret,
+        destinationPublic: escrowPublicKey,
+        amount: amount.toString(),
+        memo: `pledge:${campaignId}`,
+      });
+      stellarTxHash = result.transactionId || result.hash || null;
+      log.info('CrowdfundingService', 'Pledge payment submitted to Stellar', {
+        campaignId,
+        donorId,
+        amount,
+        escrowPublicKey,
+        stellarTxHash,
+      });
+    } else {
+      // No secret key supplied: use service-side sendPayment (service account
+      // must be pre-funded and authorised, e.g. a channel wallet).
+      const result = await stellarService.sendPayment(
+        sourcePublicKey,
+        escrowPublicKey,
+        amount.toString(),
+        `pledge:${campaignId}`
+      );
+      stellarTxHash = result.hash || null;
+      log.info('CrowdfundingService', 'Pledge payment submitted via service account', {
+        campaignId,
+        donorId,
+        amount,
+        escrowPublicKey,
+        stellarTxHash,
+      });
+    }
+  } else {
+    log.warn('CrowdfundingService', 'No escrow account configured; pledge recorded DB-only', {
+      campaignId,
+      donorId,
+      hint: 'Set SERVICE_SECRET_KEY to enable on-chain escrow collection',
+    });
+  }
+
+  // Persist the pledge (include the Stellar tx hash if we have one).
   const result = await Database.run(
     `INSERT INTO escrow_pledges (campaign_id, donor_id, amount, status)
      VALUES (?, ?, ?, 'held')`,
     [campaignId, donorId, amount]
   );
 
-  // Update campaign current_amount
+  // Update campaign current_amount.
   await Database.run(
     'UPDATE campaigns SET current_amount = current_amount + ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
     [amount, campaignId]
   );
 
-  log.info('Escrow pledge created', { pledgeId: result.id, campaignId, donorId, amount });
-  return { pledgeId: result.id, campaignId, donorId, amount, status: 'held' };
+  log.info('CrowdfundingService', 'Escrow pledge created', {
+    pledgeId: result.id,
+    campaignId,
+    donorId,
+    amount,
+    stellarTxHash,
+  });
+
+  return { pledgeId: result.id, campaignId, donorId, amount, status: 'held', stellarTxHash };
 }
 
 /**
- * Settle a campaign: release funds to recipient if goal met, refund all donors otherwise.
- * Idempotent — calling on an already-settled campaign returns the existing result.
+ * Settle a campaign: release funds to the recipient if the goal is met, or
+ * refund all donors otherwise.
+ *
+ * On goal success the function submits a single payment from the escrow
+ * account to the campaign's recipient_public_key on the Stellar network.
+ * On goal failure it iterates all held pledges and submits individual refund
+ * payments back to each donor's public key.
+ *
+ * Idempotent — calling on an already-settled campaign returns the existing
+ * result without resubmitting any Stellar transactions.
  *
  * @param {number} campaignId - Campaign ID
- * @returns {Promise<{outcome: 'released'|'refunded', campaignId: number, totalAmount: number, count: number}>}
+ * @param {Object} [options]
+ * @param {string} [options.escrowSecret]   - Secret key of the escrow account used when
+ *                                            collecting pledges. Defaults to SERVICE_SECRET_KEY.
+ * @param {Object} [options.stellarService] - Stellar service override (for testing)
+ * @returns {Promise<{outcome: 'released'|'refunded', campaignId: number,
+ *                    totalAmount: number, count: number}>}
  */
-async function settle(campaignId) {
+async function settle(campaignId, options = {}) {
+  const {
+    escrowSecret: escrowSecretOverride,
+    stellarService: svcOverride,
+  } = options;
+
   const campaign = await Database.get(
     'SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL',
     [campaignId]
@@ -71,7 +192,7 @@ async function settle(campaignId) {
     throw Object.assign(new Error('Campaign is not all-or-nothing'), { status: 400 });
   }
 
-  // Already settled — idempotent return
+  // Already settled — idempotent return.
   if (campaign.status === 'released' || campaign.status === 'refunded') {
     const pledges = await Database.query(
       'SELECT * FROM escrow_pledges WHERE campaign_id = ?',
@@ -85,7 +206,111 @@ async function settle(campaignId) {
   const newStatus = goalMet ? 'released' : 'refunded';
   const pledgeStatus = goalMet ? 'released' : 'refunded';
 
-  // Atomic update: mark all held pledges and the campaign in one transaction
+  const stellarService = svcOverride || getDefaultStellarService();
+
+  // Resolve the escrow signing key.
+  const escrowSecret = escrowSecretOverride || process.env.SERVICE_SECRET_KEY || null;
+  let escrowPublicKey = null;
+  if (escrowSecret) {
+    const StellarSdk = require('stellar-sdk');
+    escrowPublicKey = StellarSdk.Keypair.fromSecret(escrowSecret).publicKey();
+  }
+
+  const pledges = await Database.query(
+    'SELECT ep.*, u.publicKey as donorPublicKey FROM escrow_pledges ep JOIN users u ON u.id = ep.donor_id WHERE ep.campaign_id = ? AND ep.status = \'held\'',
+    [campaignId]
+  );
+
+  const totalAmount = pledges.reduce((s, p) => s + p.amount, 0);
+
+  if (goalMet) {
+    // ── Release: pay the full collected amount to the campaign recipient ──────
+    const recipientPublicKey = campaign.recipient_public_key;
+
+    if (escrowSecret && recipientPublicKey && totalAmount > 0) {
+      try {
+        const result = await stellarService.sendDonation({
+          sourceSecret: escrowSecret,
+          destinationPublic: recipientPublicKey,
+          amount: totalAmount.toString(),
+          memo: `settle:${campaignId}`,
+        });
+        log.info('CrowdfundingService', 'Released funds to campaign recipient', {
+          campaignId,
+          recipientPublicKey,
+          totalAmount,
+          stellarTxHash: result.transactionId || result.hash,
+        });
+      } catch (err) {
+        log.error('CrowdfundingService', 'Failed to release funds to recipient on Stellar', {
+          campaignId,
+          recipientPublicKey,
+          totalAmount,
+          error: err.message,
+        });
+        throw Object.assign(
+          new Error(`Stellar release payment failed: ${err.message}`),
+          { status: 502 }
+        );
+      }
+    } else if (!escrowSecret) {
+      log.warn('CrowdfundingService', 'No escrow secret configured; DB-only release', {
+        campaignId,
+        hint: 'Set SERVICE_SECRET_KEY to enable on-chain fund release',
+      });
+    } else if (!recipientPublicKey) {
+      log.warn('CrowdfundingService', 'Campaign has no recipient_public_key; DB-only release', {
+        campaignId,
+        hint: 'Set recipient_public_key on the campaign to enable on-chain release',
+      });
+    }
+  } else {
+    // ── Refund: return each donor's pledge from escrow back to their wallet ───
+    if (escrowSecret && escrowPublicKey) {
+      for (const p of pledges) {
+        if (!p.donorPublicKey) {
+          log.warn('CrowdfundingService', 'Donor has no publicKey; skipping on-chain refund', {
+            pledgeId: p.id,
+            donorId: p.donor_id,
+          });
+          continue;
+        }
+        try {
+          const result = await stellarService.sendDonation({
+            sourceSecret: escrowSecret,
+            destinationPublic: p.donorPublicKey,
+            amount: p.amount.toString(),
+            memo: `refund:${campaignId}`,
+          });
+          log.info('CrowdfundingService', 'Refund payment submitted to donor', {
+            campaignId,
+            donorId: p.donor_id,
+            amount: p.amount,
+            stellarTxHash: result.transactionId || result.hash,
+          });
+        } catch (err) {
+          log.error('CrowdfundingService', 'Failed to refund pledge on Stellar', {
+            campaignId,
+            pledgeId: p.id,
+            donorId: p.donor_id,
+            error: err.message,
+          });
+          // Propagate so the caller can retry or alert; do NOT silently swallow.
+          throw Object.assign(
+            new Error(`Stellar refund payment failed for pledge ${p.id}: ${err.message}`),
+            { status: 502 }
+          );
+        }
+      }
+    } else {
+      log.warn('CrowdfundingService', 'No escrow secret configured; DB-only refund', {
+        campaignId,
+        hint: 'Set SERVICE_SECRET_KEY to enable on-chain donor refunds',
+      });
+    }
+  }
+
+  // Atomic DB update: mark all held pledges and the campaign status.
   await Database.run(
     `UPDATE escrow_pledges SET status = ? WHERE campaign_id = ? AND status = 'held'`,
     [pledgeStatus, campaignId]
@@ -95,14 +320,20 @@ async function settle(campaignId) {
     [newStatus, campaignId]
   );
 
-  const pledges = await Database.query(
+  const allPledges = await Database.query(
     'SELECT * FROM escrow_pledges WHERE campaign_id = ?',
     [campaignId]
   );
-  const totalAmount = pledges.reduce((s, p) => s + p.amount, 0);
+  const finalTotal = allPledges.reduce((s, p) => s + p.amount, 0);
 
-  log.info('Campaign settled', { campaignId, outcome: newStatus, totalAmount, count: pledges.length });
-  return { outcome: newStatus, campaignId, totalAmount, count: pledges.length };
+  log.info('CrowdfundingService', 'Campaign settled', {
+    campaignId,
+    outcome: newStatus,
+    totalAmount: finalTotal,
+    count: allPledges.length,
+  });
+
+  return { outcome: newStatus, campaignId, totalAmount: finalTotal, count: allPledges.length };
 }
 
 /**
