@@ -1,0 +1,77 @@
+﻿# ============================================================
+# CODEOWNERS — Automatic reviewer assignment
+# ============================================================
+# Each line maps a file pattern to one or more owners.
+# Owners are auto-requested for review when PRs touch those files.
+#
+# For more details: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @Manuel1234477
+
+# Authentication & Authorization
+/src/middleware/auth.js                    @Manuel1234477
+/src/middleware/apiKey.js                  @Manuel1234477
+/src/middleware/rbac.js                    @Manuel1234477
+/src/middleware/adminTOTP.js              @Manuel1234477
+/src/middleware/scopeValidator.js          @Manuel1234477
+/src/config/permissionMatrix.js           @Manuel1234477
+/src/config/roles.json                    @Manuel1234477
+
+# Encryption & Key Handling
+/src/utils/encryption.js                  @Manuel1234477
+/src/utils/kms.js                         @Manuel1234477
+/src/utils/memoEncryption.js              @Manuel1234477
+/src/utils/memoKeyManager.js              @Manuel1234477
+/src/utils/safeEqual.js                   @Manuel1234477
+/src/middleware/requestDecryption.js       @Manuel1234477
+/src/middleware/requestSigning.js          @Manuel1234477
+
+# Payments / Donation Flow
+/src/utils/donationValidator.js           @Manuel1234477
+/src/utils/stellarAsset.js                @Manuel1234477
+/src/utils/feeCalculator.js               @Manuel1234477
+/src/utils/currencyConversion.js          @Manuel1234477
+/src/utils/overpaymentDetector.js         @Manuel1234477
+/src/utils/money.js                       @Manuel1234477
+/src/config/stellar.js                    @Manuel1234477
+/src/config/stellarEnvironments.js        @Manuel1234477
+
+# Security & Abuse Prevention
+/src/middleware/abuseDetection.js          @Manuel1234477
+/src/middleware/replayDetection.js         @Manuel1234477
+/src/middleware/geoBlock.js               @Manuel1234477
+/src/middleware/csp.js                    @Manuel1234477
+/src/middleware/blockCheck.js             @Manuel1234477
+/src/middleware/suspiciousPatternDetection.js @Manuel1234477
+/src/utils/abuseDetector.js               @Manuel1234477
+/src/utils/bruteForceProtection.js        @Manuel1234477
+/src/utils/replayDetector.js              @Manuel1234477
+/src/utils/ssrf.js                        @Manuel1234477
+/src/utils/ipAllowlist.js                 @Manuel1234477
+/src/utils/responseSanitizer.js           @Manuel1234477
+/src/utils/requestSigner.js               @Manuel1234477
+/src/utils/anonymization.js               @Manuel1234477
+/src/utils/dataMasker.js                  @Manuel1234477
+/src/config/securityConfig.js             @Manuel1234477
+/src/config/replayDetection.js            @Manuel1234477
+
+# Database Migrations
+/src/migrations/**                        @Manuel1234477
+
+# CI / CD / Security Workflows
+/.github/workflows/*.yml                  @Manuel1234477
+
+# Infrastructure & Deploy
+/deploy/**                                @Manuel1234477
+/Dockerfile                               @Manuel1234477
+/docker-compose*.yml                      @Manuel1234477
+
+# Configuration & Secrets
+/secrets/**                               @Manuel1234477
+/src/config/**                            @Manuel1234477
+/.env.example                             @Manuel1234477
+
+# Security Documentation
+/SECURITY.md                              @Manuel1234477
+/CONTRIBUTING.md                           @Manuel1234477
