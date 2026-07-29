@@ -23,6 +23,8 @@ const log = require('../utils/log');
 
 /** @type {Map<string, object>} id -> transaction object */
 const _store = new Map();
+/** @type {Map<string, object>} idempotencyKey -> transaction object */
+const _idempotencyIndex = new Map();
 let _loaded = false;
 let _loading = null; // Promise<void> | null
 
@@ -60,7 +62,17 @@ function _persist(tx) {
       tx.deleted_at || null,
       data,
     ]
-  ).catch(err => log.error('TRANSACTION_MODEL', 'SQLite persist failed', { id: tx.id, error: err.message }));
+  ).catch(err => {
+    const isIdempotencyConflict = err && err.message && /UNIQUE constraint failed: donations_store\.idempotency_key/i.test(err.message);
+    if (isIdempotencyConflict && _store.get(tx.id) === tx) {
+      _store.delete(tx.id);
+      if (tx.idempotencyKey && _idempotencyIndex.get(tx.idempotencyKey) === tx) {
+        _idempotencyIndex.delete(tx.idempotencyKey);
+      }
+    }
+
+    log.error('TRANSACTION_MODEL', 'SQLite persist failed', { id: tx.id, error: err.message });
+  });
 }
 
 /**
@@ -79,6 +91,9 @@ async function _ensureLoaded() {
         try {
           const tx = JSON.parse(row.data);
           _store.set(tx.id, tx);
+          if (tx.idempotencyKey) {
+            _idempotencyIndex.set(tx.idempotencyKey, tx);
+          }
         } catch (_) { /* skip corrupt rows */ }
       }
       _loaded = true;
@@ -129,10 +144,9 @@ class Transaction {
 
     // Idempotency check
     if (transactionData.idempotencyKey) {
-      for (const tx of _store.values()) {
-        if (tx.idempotencyKey === transactionData.idempotencyKey) {
-          return tx;
-        }
+      const existing = _idempotencyIndex.get(transactionData.idempotencyKey);
+      if (existing) {
+        return existing;
       }
     }
 
@@ -164,6 +178,9 @@ class Transaction {
     };
 
     _store.set(newTransaction.id, newTransaction);
+    if (newTransaction.idempotencyKey) {
+      _idempotencyIndex.set(newTransaction.idempotencyKey, newTransaction);
+    }
     _persist(newTransaction);
 
     const emitter = this.eventEmitter;
@@ -423,6 +440,7 @@ class Transaction {
   /** Test helper — wipe all in-memory and SQLite donation data. */
   static _clearAllData() {
     _store.clear();
+    _idempotencyIndex.clear();
     _loaded = true;
     const Database = require('../utils/database');
     Database.run('DELETE FROM donations_store').catch(err =>
@@ -437,6 +455,7 @@ class Transaction {
   static async _reloadFromDb() {
     _loaded = false;
     _store.clear();
+    _idempotencyIndex.clear();
     await _ensureLoaded();
   }
 }
