@@ -481,24 +481,37 @@ async function resetQuota(keyId) {
 }
 
 /**
- * Increment quota usage for an API key
+ * Atomically increment quota usage for an API key.
+ *
+ * Uses a single SQL statement (`UPDATE … SET quota_used = quota_used + 1`) to
+ * avoid the lost-update race condition that the previous SELECT-then-UPDATE
+ * pattern was vulnerable to under concurrent requests. (#1365)
+ *
  * @param {number} keyId - API key ID
  * @returns {Promise<{quotaUsed: number, quotaRemaining: number|null}>}
  */
 async function incrementQuota(keyId) {
   await initializeApiKeysTable();
-  const row = await db.get(`SELECT monthly_quota, quota_used FROM api_keys WHERE id = ?`, [keyId]);
-  
-  if (!row) {
+
+  // Single atomic statement — no read-then-write gap for concurrent callers
+  const result = await db.run(
+    `UPDATE api_keys SET quota_used = quota_used + 1 WHERE id = ?`,
+    [keyId]
+  );
+
+  if (result.changes === 0) {
     throw new Error('API key not found');
   }
 
-  const newUsed = (row.quota_used || 0) + 1;
-  await db.run(`UPDATE api_keys SET quota_used = ? WHERE id = ?`, [newUsed, keyId]);
+  // Fetch the committed value in a separate read so we return accurate numbers
+  const row = await db.get(
+    `SELECT monthly_quota, quota_used FROM api_keys WHERE id = ?`,
+    [keyId]
+  );
 
   return {
-    quotaUsed: newUsed,
-    quotaRemaining: row.monthly_quota ? row.monthly_quota - newUsed : null,
+    quotaUsed: row.quota_used,
+    quotaRemaining: row.monthly_quota != null ? row.monthly_quota - row.quota_used : null,
   };
 }
 

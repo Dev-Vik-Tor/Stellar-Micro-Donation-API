@@ -31,30 +31,83 @@ const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const MAX_QUERY_DEPTH = 5;
 
 /**
- * Recursively compute the depth of a GraphQL selection set.
- * @param {object} selectionSet
- * @param {number} depth
- * @returns {number}
+ * Build a lookup map of fragment name -> FragmentDefinition node from a parsed document.
+ * Required so that FragmentSpread nodes can be resolved to their full selection sets
+ * when computing query depth. Without this map, fragment spreads silently halt
+ * depth recursion, allowing chained fragments (A → B → C) to bypass MAX_QUERY_DEPTH.
+ *
+ * @param {object} document - Parsed GraphQL document
+ * @returns {Map<string, object>} Fragment name to FragmentDefinition node
  */
-function getQueryDepth(selectionSet, depth = 0) {
+function buildFragmentMap(document) {
+  const map = new Map();
+  for (const def of document.definitions) {
+    if (def.kind === 'FragmentDefinition') {
+      map.set(def.name.value, def);
+    }
+  }
+  return map;
+}
+
+/**
+ * Recursively compute the depth of a GraphQL selection set, resolving
+ * FragmentSpread nodes to their definitions so chained fragment spreads
+ * (Fragment A → B → C) accumulate depth correctly toward MAX_QUERY_DEPTH.
+ *
+ * @param {object} selectionSet - AST SelectionSet node
+ * @param {Map<string, object>} fragmentMap - Fragment name → FragmentDefinition
+ * @param {number} depth - Current accumulated depth
+ * @param {Set<string>} visited - Fragment names already on the current call stack
+ *   (cycle guard: prevents infinite recursion from circular fragment references)
+ * @returns {number} Maximum depth reached within this selection set
+ */
+function getQueryDepth(selectionSet, fragmentMap, depth = 0, visited = new Set()) {
   if (!selectionSet || !selectionSet.selections) return depth;
-  return Math.max(
-    ...selectionSet.selections.map((s) =>
-      getQueryDepth(s.selectionSet, depth + 1)
-    )
-  );
+
+  let max = depth;
+  for (const selection of selectionSet.selections) {
+    if (selection.kind === 'FragmentSpread') {
+      // Resolve the fragment spread to its definition and recurse into it.
+      // The depth does NOT increase at the spread site itself — it increases
+      // when we step into the fragment's own child fields.
+      const fragName = selection.name.value;
+      if (!visited.has(fragName)) {
+        const fragDef = fragmentMap.get(fragName);
+        if (fragDef && fragDef.selectionSet) {
+          // Mark visited before recursing to guard against circular fragments
+          const nextVisited = new Set(visited).add(fragName);
+          const d = getQueryDepth(fragDef.selectionSet, fragmentMap, depth, nextVisited);
+          if (d > max) max = d;
+        }
+      }
+    } else if (selection.kind === 'InlineFragment') {
+      // Inline fragments are traversed in-place; they don't add depth themselves
+      const d = getQueryDepth(selection.selectionSet, fragmentMap, depth, visited);
+      if (d > max) max = d;
+    } else {
+      // Regular field — step one level deeper
+      const d = getQueryDepth(selection.selectionSet, fragmentMap, depth + 1, visited);
+      if (d > max) max = d;
+    }
+  }
+  return max;
 }
 
 /**
  * Validate that a parsed document does not exceed MAX_QUERY_DEPTH.
+ * Fragments are fully resolved before measuring depth so that chained
+ * fragment spreads cannot bypass the limit (#1368).
+ *
  * @param {object} document - Parsed GraphQL document
  * @returns {{ valid: boolean, depth: number }}
  */
 function checkDepth(document) {
+  const fragmentMap = buildFragmentMap(document);
   let maxDepth = 0;
   for (const def of document.definitions) {
+    if (def.kind === 'FragmentDefinition') continue; // checked via spread resolution
     if (def.selectionSet) {
-      const d = getQueryDepth(def.selectionSet);
+      const d = getQueryDepth(def.selectionSet, fragmentMap);
       if (d > maxDepth) maxDepth = d;
     }
   }
