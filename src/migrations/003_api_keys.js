@@ -22,6 +22,7 @@ exports.up = async (db) => {
       rotated_to_id INTEGER,
       signing_required INTEGER NOT NULL DEFAULT 0,
       key_secret TEXT,
+      scopes TEXT,
       allowed_ips TEXT,
       monthly_quota INTEGER,
       quota_used INTEGER NOT NULL DEFAULT 0,
