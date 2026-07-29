@@ -86,9 +86,7 @@ function validateRolesConfig(config) {
     return { valid: false, errors, warnings };
   }
 
-  for (let i = 0; i < config.roles.length; i++) {
-    const role = config.roles[i];
-
+  for (const [i, role] of config.roles.entries()) {
     if (!role || typeof role !== 'object' || Array.isArray(role)) {
       errors.push(`Role at index ${i} must be a non-null object`);
       continue;
@@ -107,8 +105,7 @@ function validateRolesConfig(config) {
     } else if (role.permissions.length === 0) {
       errors.push(`Role "${role.name}" has an empty "permissions" array`);
     } else {
-      for (let j = 0; j < role.permissions.length; j++) {
-        const perm = role.permissions[j];
+      for (const [j, perm] of role.permissions.entries()) {
         if (typeof perm !== 'string') {
           errors.push(`Role "${role.name}", permission at index ${j} must be a string, got ${typeof perm}`);
         } else if (perm === '*') {
