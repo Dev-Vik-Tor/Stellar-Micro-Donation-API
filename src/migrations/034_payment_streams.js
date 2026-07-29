@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '024_payment_streams';
+exports.name = '034_payment_streams';
 
 exports.up = async (db) => {
   await db.run(`

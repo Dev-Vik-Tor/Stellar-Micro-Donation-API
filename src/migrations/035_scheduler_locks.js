@@ -1,6 +1,6 @@
 'use strict';
 
-exports.name = '024_scheduler_locks';
+exports.name = '035_scheduler_locks';
 
 exports.up = async (db) => {
   await db.run(`
