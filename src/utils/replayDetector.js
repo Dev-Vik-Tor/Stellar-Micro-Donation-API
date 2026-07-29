@@ -177,16 +177,35 @@ function sortKeys(obj) {
 }
 
 /**
- * Compute a unique fingerprint for a request
- * Uses SHA-256 hash of JSON-serialized {method, path, body}
+ * Compute a unique fingerprint for a request.
+ * Uses SHA-256 hash of JSON-serialized {method, path, query, body, callerId}.
+ *
+ * Including `query` prevents two requests that differ only in query parameters
+ * from colliding into the same fingerprint bucket.
+ *
+ * Including `callerId` (API key ID or user ID when available) prevents
+ * concurrent legitimate requests from different callers that happen to share
+ * method/path/body/query from being mis-identified as a replay of each other.
+ *
  * @param {Object} req - Express request object
  * @returns {string} 64-character hex string (SHA-256 hash)
  */
 function computeFingerprint(req) {
+  // Resolve caller identifier: prefer authenticated key/user ID, then
+  // fall back to IP so there is always some per-caller differentiation.
+  const callerId =
+    (req.apiKey && req.apiKey.id) ||
+    (req.user   && req.user.id)   ||
+    req.clientIp ||
+    req.ip       ||
+    'anonymous';
+
   const components = {
-    method: req.method,
-    path: req.path,
-    body: req.body || ''
+    method:   req.method,
+    path:     req.path,
+    query:    req.query  || {},
+    body:     req.body   || '',
+    callerId,
   };
   
   // Sort keys recursively for stable serialization
