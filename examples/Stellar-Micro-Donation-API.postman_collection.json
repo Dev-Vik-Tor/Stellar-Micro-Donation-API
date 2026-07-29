@@ -39,7 +39,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"publicKey\": \"{{WALLET_PUBLIC_KEY}}\",\n  \"name\": \"My Donation Wallet\",\n  \"metadata\": {\n    \"region\": \"US\",\n    \"donorType\": \"individual\"\n  }\n}"
+              "raw": "{\n  \"address\": \"{{WALLET_PUBLIC_KEY}}\",\n  \"name\": \"My Donation Wallet\",\n  \"metadata\": {\n    \"region\": \"US\",\n    \"donorType\": \"individual\"\n  }\n}\n"
             },
             "url": {
               "raw": "{{BASE_URL}}/wallets",
@@ -71,7 +71,7 @@
       "name": "2. One-Time Donations",
       "item": [
         {
-          "name": "Create Donation",
+          "name": "Create Donation (custodial)",
           "request": {
             "method": "POST",
             "header": [
@@ -86,7 +86,32 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"senderId\": \"{{DONOR_PUBLIC_KEY}}\",\n  \"recipientId\": \"{{RECIPIENT_PUBLIC_KEY}}\",\n  \"amount\": \"50.00\",\n  \"memo\": \"Education fund donation\",\n  \"sdgCategories\": [\"04\"]\n}"
+              "raw": "{\n  \"senderId\": 1,\n  \"receiverId\": 2,\n  \"amount\": \"50.00\",\n  \"memo\": \"Education fund donation\",\n  \"sdgCategories\": [\"04\"]\n}\n"
+            },
+            "url": {
+              "raw": "{{BASE_URL}}/donations",
+              "host": ["{{BASE_URL}}"],
+              "path": ["donations"]
+            }
+          }
+        },
+        {
+          "name": "Create Donation (non-custodial)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-Key",
+                "value": "{{API_KEY}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"donor\": \"{{DONOR_PUBLIC_KEY}}\",\n  \"recipient\": \"{{RECIPIENT_PUBLIC_KEY}}\",\n  \"amount\": \"50.00\",\n  \"memo\": \"Education fund donation\"\n}\n"
             },
             "url": {
               "raw": "{{BASE_URL}}/donations",
@@ -134,7 +159,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"transactionHash\": \"{{TRANSACTION_HASH}}\"\n}"
+              "raw": "{\n  \"transactionHash\": \"{{TRANSACTION_HASH}}\"\n}\n"
             },
             "url": {
               "raw": "{{BASE_URL}}/donations/verify",
@@ -164,7 +189,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"donorId\": \"{{DONOR_PUBLIC_KEY}}\",\n  \"recipientId\": \"{{RECIPIENT_PUBLIC_KEY}}\",\n  \"amount\": \"25.00\",\n  \"frequency\": \"monthly\",\n  \"startDate\": \"2026-07-01\"\n}"
+              "raw": "{\n  \"donorPublicKey\": \"{{DONOR_PUBLIC_KEY}}\",\n  \"recipientPublicKey\": \"{{RECIPIENT_PUBLIC_KEY}}\",\n  \"amount\": \"25.00\",\n  \"frequency\": \"monthly\",\n  \"startDate\": \"2026-07-01\"\n}\n"
             },
             "url": {
               "raw": "{{BASE_URL}}/stream/create",
@@ -337,7 +362,7 @@
   "variable": [
     {
       "key": "BASE_URL",
-      "value": "http://localhost:3000/api",
+      "value": "http://localhost:3000/api/v1",
       "type": "string"
     },
     {
@@ -347,17 +372,17 @@
     },
     {
       "key": "DONOR_PUBLIC_KEY",
-      "value": "GBUQWP3BOUZX34ULNQG23RQ6F4BWFIreqclmnz4QSY47PCNQRICKS57",
+      "value": "GCBT6W2QOCFDKQAQBWNGNYYGAH2LRHGTEVK5YBL6WRVQPPWJVKUNMOMS",
       "type": "string"
     },
     {
       "key": "RECIPIENT_PUBLIC_KEY",
-      "value": "GCEZWJG7SSHQUUP7IBRN23JQCQR53ROE44TSBROAM4TOBJOJJU5YV2Z2",
+      "value": "GCVUHGLGMHYWM6NY33LKPHMX2GHXNMPW6HCO4DLQDG25T4OWDG7JJL6Y",
       "type": "string"
     },
     {
       "key": "WALLET_PUBLIC_KEY",
-      "value": "GBUQWP3BOUZX34ULNQG23RQ6F4BWFIРЕQCLMNZ4QSY47PCNQRICKS57",
+      "value": "GCMXPIWRCPVM63NUOZZDHC42CQKEUDLIBS6ZM6A3VD7SJ3UE2OHI6I4T",
       "type": "string"
     },
     {
