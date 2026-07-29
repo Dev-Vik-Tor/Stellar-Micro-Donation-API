@@ -114,8 +114,14 @@ const SECURITY_CONFIGS = {
     validator: (value) => {
       if (!value || !value.trim()) return null;
       const trimmed = value.trim();
-      // Basic Stellar secret key validation
-      if (trimmed.startsWith('S') && trimmed.length >= 56) {
+      // Stellar secret keys must start with 'S', be exactly 56 characters,
+      // and contain only uppercase letters A-Z and digits 2-7 (base32 alphabet).
+      // This matches the isValidStellarSecretKey() pattern used elsewhere in
+      // the codebase (src/utils/validators.js) and rejects keys that merely
+      // start with 'S' and are >= 56 chars — an overly permissive check that
+      // would accept invalid characters or incorrect lengths beyond 56.
+      const stellarSecretKeyRegex = /^S[A-Z2-7]{55}$/;
+      if (stellarSecretKeyRegex.test(trimmed)) {
         return trimmed;
       }
       log.warn('SECURITY_CONFIG', 'Invalid Stellar secret key format, ignoring', {
