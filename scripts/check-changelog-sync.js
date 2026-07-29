@@ -21,6 +21,8 @@
  */
 'use strict';
 
+/* eslint-disable security/detect-object-injection */
+
 const fs = require('fs');
 const path = require('path');
 
@@ -136,6 +138,7 @@ if (entryErrors === 0) {
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 console.log('');
+/* eslint-enable security/detect-object-injection */
 if (errors === 0) {
   console.log('✅  CHANGELOG.json is valid.\n');
   process.exit(0);

@@ -10,7 +10,7 @@ const path = require('path');
 const Ajv = require('ajv');
 
 const committedPath = path.join(__dirname, '../docs/openapi.json');
-const { spec, sortObjectKeys } = require('../src/config/openapi');
+const { spec } = require('../src/config/openapi');
 const generated = JSON.stringify(spec, null, 2);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ for (const [path, pathItem] of Object.entries(specPaths)) {
     for (const [status, response] of Object.entries(operation.responses)) {
       if (!response.content) continue;
 
-      for (const [mediaType, content] of Object.entries(response.content)) {
+      for (const [, content] of Object.entries(response.content)) {
         if (!content.schema || !content.example) continue;
 
         try {

@@ -7,8 +7,6 @@
  * and output them for verification against OpenAPI spec.
  */
 
-const path = require('path');
-
 /**
  * Recursively walk the Express router stack and collect all routes.
  * @param {ExpressRouter} router - The Express router or app

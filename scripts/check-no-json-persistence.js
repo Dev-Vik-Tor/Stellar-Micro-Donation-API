@@ -15,6 +15,8 @@
 
 'use strict';
 
+/* eslint-disable security/detect-non-literal-fs-filename, security/detect-object-injection */
+
 const fs = require('fs');
 const path = require('path');
 
@@ -80,5 +82,6 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
+/* eslint-enable security/detect-non-literal-fs-filename, security/detect-object-injection */
 console.log('[check-no-json-persistence] OK — no legacy JSON store references found in src/');
 process.exit(0);
