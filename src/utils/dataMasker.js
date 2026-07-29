@@ -33,7 +33,6 @@ const SENSITIVE_PATTERNS = [
   'api_key',
   'api-key',
   'authorization',
-  'auth',
   'bearer',
   
   // Stellar-specific
@@ -49,7 +48,8 @@ const SENSITIVE_PATTERNS = [
   'secret_key',
   'signingkey',
   'signing_key',
-  'seed',
+  'seedphrase',
+  'seed_phrase',
   'mnemonic',
   
   // Financial & PII
@@ -71,10 +71,12 @@ const SENSITIVE_PATTERNS = [
   'connection_string',
   'connectionstring',
   'encryption_key',
-  'cipher',
-  'iv',
+  'cipher_key',
+  'cipherkey',
   'authtag',
   'auth_tag',
+  'initializationvector',
+  'initialization_vector',
 
   // HSM (Hardware Security Module)
   'hsm_pin',
@@ -93,9 +95,10 @@ const SENSITIVE_PATTERNS = [
   'kmsprovider',
   
   // Session & Cookies
-  'session',
   'sessionid',
   'session_id',
+  'sessiontoken',
+  'session_token',
   'cookie',
   'csrf',
   'xsrf',
@@ -103,7 +106,10 @@ const SENSITIVE_PATTERNS = [
   // HTTP headers
   'x-api-key',
   'x_api_key',
-  'memo',
+  'memo_text',
+  'memo_hash',
+  'memotext',
+  'memohash',
 ];
 
 /**
@@ -136,7 +142,11 @@ function maskStellarSecretsInString(str) {
 }
 
 /**
- * Check if a key name indicates sensitive data
+ * Check if a key name indicates sensitive data.
+ * Uses exact matching (after normalising separators to lower-case) rather than
+ * substring matching to avoid masking innocent fields like receiverId (which
+ * contains the substring "iv") or authorName (which contains "auth").
+ *
  * @param {string} key - The key name to check
  * @returns {boolean} True if the key is sensitive
  */
@@ -147,7 +157,7 @@ function isSensitiveKey(key) {
   
   return SENSITIVE_PATTERNS.some(pattern => {
     const normalizedPattern = pattern.toLowerCase().replace(/[-_\s]/g, '');
-    return lowerKey.includes(normalizedPattern);
+    return lowerKey === normalizedPattern;
   });
 }
 
