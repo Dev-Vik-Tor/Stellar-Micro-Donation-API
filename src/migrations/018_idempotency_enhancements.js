@@ -73,15 +73,21 @@ exports.up = async (db) => {
   `);
 
   // ── Step 4: DB-backed dedup cache (replaces in-memory Map in deduplication middleware) ──
+  // NOTE: SQLite's PRIMARY KEY clause only accepts plain column names — expressions
+  // such as COALESCE(apiKeyId, '') are not valid DDL syntax and cause a parse error.
+  // The NULL-safe composite uniqueness requirement is handled instead by:
+  //   • a NOT NULL surrogate column `api_key_scope` that stores '' when apiKeyId is NULL, and
+  //   • a composite PRIMARY KEY (fingerprint, api_key_scope) on plain column names.
   await db.run(`
     CREATE TABLE IF NOT EXISTS dedup_cache (
       fingerprint TEXT NOT NULL,
       apiKeyId TEXT,
+      api_key_scope TEXT NOT NULL DEFAULT '',
       status_code INTEGER NOT NULL,
       body TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       expires_at DATETIME NOT NULL,
-      PRIMARY KEY (fingerprint, COALESCE(apiKeyId, ''))
+      PRIMARY KEY (fingerprint, api_key_scope)
     )
   `);
 
