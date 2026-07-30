@@ -22,6 +22,7 @@
 
 'use strict';
 
+const fs = require('fs');
 const { validateRolesConfig, loadRolesConfig } = require('../../src/models/permissions');
 
 // ─── Valid config ─────────────────────────────────────────────────────────────
@@ -291,6 +292,17 @@ describe('validateRolesConfig', () => {
 // ─── loadRolesConfig integration ─────────────────────────────────────────────
 
 describe('loadRolesConfig integration', () => {
+  test('throws a clear error for malformed roles.json structure', () => {
+    const readSpy = jest.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({
+      roles: [{ name: 'admin', permissions: 'not-an-array' }],
+    }));
+
+    expect(() => loadRolesConfig()).toThrow(/roles\.json/i);
+    expect(() => loadRolesConfig()).toThrow(/permissions/i);
+
+    readSpy.mockRestore();
+  });
+
   test('loads and returns the current roles.json file', () => {
     const config = loadRolesConfig();
     expect(config).toHaveProperty('roles');

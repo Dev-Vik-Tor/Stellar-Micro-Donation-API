@@ -14,10 +14,6 @@ const StellarSdk = require('stellar-sdk');
 const asyncHandler = require('../utils/asyncHandler');
 const log = require('../utils/log');
 const requireApiKey = require('../middleware/apiKey');
-const { requireAdmin, requireAdminFn } = (() => {
-  const rbac = require('../middleware/rbac');
-  return { requireAdmin: rbac.requireAdmin, requireAdminFn: rbac.requireAdmin };
-})();
 const rbac = require('../middleware/rbac');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 const { healthCheckRateLimiter } = require('../middleware/rateLimiter');
@@ -118,12 +114,14 @@ function populateRegistry(prefix, router) {
       }
     } else if (layer.name === 'router' && layer.handle && layer.handle.stack) {
       // Nested sub-router — recurse with extracted path segment
+      /* eslint-disable security/detect-unsafe-regex */
       const subPrefix = prefix + (layer.regexp.source
         .replace(/^\^\\\//, '/')
         .replace(/\\\/\?(?:\(\?.*\))?\$/, '')
         .replace(/\\\//g, '/')
         .replace(/\?(?:\(\?.*\))?$/, '')
         || '');
+      /* eslint-enable security/detect-unsafe-regex */
       populateRegistry(subPrefix, layer.handle);
     }
   }
@@ -490,11 +488,13 @@ function mountRoutes(app, services = {}) {
       // Extract the mount prefix from the layer regexp
       // Express stores it as: /^\\/api\\/v1\\/?(?=\\/|$)/i  → /api/v1
       const src = layer.regexp.source;
+      /* eslint-disable security/detect-unsafe-regex */
       const prefix = src
         .replace(/^\^\\\//, '/')
         .replace(/\\\/\?(?:\(\?[^)]*\))?\$?$/, '')
         .replace(/\?(?:\(\?[^)]*\))?$/, '')
         .replace(/\\\//g, '/');
+      /* eslint-enable security/detect-unsafe-regex */
       populateRegistry(prefix, layer.handle);
     } else if (layer.route) {
       for (const method of Object.keys(layer.route.methods)) {

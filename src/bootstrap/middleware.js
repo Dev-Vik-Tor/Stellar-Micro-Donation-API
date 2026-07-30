@@ -10,10 +10,9 @@
 'use strict';
 
 const helmet = require('helmet');
-const StellarSdk = require('stellar-sdk');
 const { createCorsMiddleware } = require('../middleware/cors');
 const { createPathBasedCspMiddleware, cspReportRouter } = require('../middleware/csp');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const requestId = require('../middleware/requestId');
 const { attachLifecycleTracking } = require('../middleware/requestLifecycle');

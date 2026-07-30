@@ -17,41 +17,6 @@ const log = require('../utils/log');
 
 const ROLES_CONFIG_PATH = path.join(__dirname, '../config/roles.json');
 
-/** Default roles configuration used as fallback when roles.json cannot be loaded or is invalid. */
-const DEFAULT_ROLES_CONFIG = {
-  roles: [
-    {
-      name: 'admin',
-      permissions: ['*'] // Admin has all permissions
-    },
-    {
-      name: 'user',
-      permissions: [
-        'donations:create',
-        'donations:read',
-        'donations:verify',
-        'wallets:read',
-        'wallets:create',
-        'wallets:update',
-        'stream:create',
-        'stream:read',
-        'stream:update',
-        'stream:delete',
-        'stats:read',
-        'transactions:read',
-        'transactions:sync',
-        'transactions:simulate'
-      ]
-    },
-    {
-      name: 'guest',
-      permissions: [
-        'donations:read',
-        'stats:read'
-      ]
-    }
-  ]
-};
 
 /**
  * Validate the structure of a parsed roles configuration object.
@@ -139,14 +104,15 @@ function loadRolesConfig() {
 
     const validation = validateRolesConfig(config);
     if (!validation.valid) {
-      log.error('PERMISSIONS', 'roles.json validation failed, using defaults', { errors: validation.errors });
+      const message = `Invalid roles.json configuration: ${validation.errors.join('; ')}`;
+      log.error('PERMISSIONS', message, { errors: validation.errors });
       for (const err of validation.errors) {
         log.error('PERMISSIONS', `  roles.json validation error: ${err}`);
       }
       for (const warn of validation.warnings) {
         log.warn('PERMISSIONS', `  roles.json validation warning: ${warn}`);
       }
-      return DEFAULT_ROLES_CONFIG;
+      throw new Error(message);
     }
 
     if (validation.warnings.length > 0) {
@@ -157,9 +123,13 @@ function loadRolesConfig() {
 
     return config;
   } catch (error) {
-    log.error('PERMISSIONS', 'Failed to load roles configuration, using defaults', { error: error.message });
-    // Return default configuration if file doesn't exist or is invalid JSON
-    return DEFAULT_ROLES_CONFIG;
+    if (error && error.message && error.message.startsWith('Invalid roles.json configuration:')) {
+      throw error;
+    }
+
+    const message = `Failed to load roles configuration from ${ROLES_CONFIG_PATH}: ${error.message}`;
+    log.error('PERMISSIONS', message, { error: error.message });
+    throw new Error(message);
   }
 }
 

@@ -13,9 +13,6 @@
  * Usage: node scripts/verify-route-coverage.js
  */
 
-const fs = require('fs');
-const path = require('path');
-
 const { spec } = require('../src/config/openapi');
 
 /**

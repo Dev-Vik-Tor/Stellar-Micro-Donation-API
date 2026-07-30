@@ -34,6 +34,7 @@ function checkCoverage() {
   const results = [];
   let allPassed = true;
 
+  /* eslint-disable security/detect-object-injection */
   for (const [metric, threshold] of Object.entries(THRESHOLDS)) {
     const actual = total[metric].pct;
     const passed = actual >= threshold;
@@ -64,6 +65,7 @@ function checkCoverage() {
   });
 
   console.log('─'.repeat(60));
+  /* eslint-enable security/detect-object-injection */
 
   if (allPassed) {
     console.log('\n✅ All coverage thresholds met!');
