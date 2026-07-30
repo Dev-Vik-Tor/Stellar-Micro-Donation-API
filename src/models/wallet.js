@@ -8,19 +8,92 @@ const Database = require('../utils/database');
 
 /** Encrypted field names on wallet records */
 const ENCRYPTED_FIELDS = ['label', 'notes'];
+let _schemaReady = false;
+let _schemaPromise = null;
 
 function getEncryptionService() {
   return require('../services/EncryptionService');
 }
 
-function encryptWalletFields(wallet) {
-  if (!process.env.ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY_1) return wallet;
-  const svc = getEncryptionService();
-  const result = { ...wallet };
-  for (const field of ENCRYPTED_FIELDS) {
-    if (result[field] != null) {
-      result[field] = svc.encryptField(result[field]);
+function isEncryptionEnabled() {
+  return Boolean(process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY_1);
+}
+
+function isEncryptionFlagSet(wallet, field) {
+  const value = wallet?.[`${field}_encrypted`];
+  return value === true || value === 1 || value === '1';
+}
+
+function isEncryptedValue(value) {
+  return typeof value === 'string' && value.startsWith('v');
+}
+
+async function ensureWalletSchema() {
+  if (_schemaReady) return;
+  if (_schemaPromise) return _schemaPromise;
+
+  _schemaPromise = (async () => {
+    await Database.run(`
+      CREATE TABLE IF NOT EXISTS wallets (
+        id TEXT PRIMARY KEY,
+        address TEXT NOT NULL UNIQUE,
+        label TEXT,
+        ownerName TEXT,
+        notes TEXT,
+        leaderboard_visibility INTEGER DEFAULT 1,
+        last_synced_at TEXT,
+        last_cursor TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT,
+        deletedAt TEXT,
+        label_encrypted INTEGER DEFAULT 0,
+        notes_encrypted INTEGER DEFAULT 0
+      )
+    `);
+
+    const columns = await Database.all('PRAGMA table_info(wallets)');
+    const existingColumns = new Set(columns.map(column => column.name));
+
+    if (!existingColumns.has('label_encrypted')) {
+      await Database.run('ALTER TABLE wallets ADD COLUMN label_encrypted INTEGER DEFAULT 0');
     }
+    if (!existingColumns.has('notes_encrypted')) {
+      await Database.run('ALTER TABLE wallets ADD COLUMN notes_encrypted INTEGER DEFAULT 0');
+    }
+
+    _schemaReady = true;
+  })().catch(err => {
+    _schemaPromise = null;
+    throw err;
+  });
+
+  return _schemaPromise;
+}
+
+function encryptWalletFields(wallet) {
+  const result = { ...wallet };
+  const svc = getEncryptionService();
+  for (const field of ENCRYPTED_FIELDS) {
+    const stateKey = `${field}_encrypted`;
+    const value = result[field];
+
+    if (value == null) {
+      result[stateKey] = 0;
+      continue;
+    }
+
+    if (isEncryptedValue(value)) {
+      result[stateKey] = 1;
+      continue;
+    }
+
+    if (!isEncryptionEnabled()) {
+      result[stateKey] = isEncryptionFlagSet(result, field) ? 1 : 0;
+      continue;
+    }
+
+    result[field] = svc.encryptField(value);
+    result[stateKey] = 1;
   }
   return result;
 }
@@ -30,9 +103,18 @@ function decryptWalletFields(wallet) {
   const svc = getEncryptionService();
   const result = { ...wallet };
   for (const field of ENCRYPTED_FIELDS) {
-    if (result[field] != null) {
-      try { result[field] = svc.decryptField(result[field]); } catch (_) { /* leave as-is */ }
+    const stateKey = `${field}_encrypted`;
+    const markedEncrypted = isEncryptionFlagSet(result, field) || isEncryptedValue(result[field]);
+    if (result[field] != null && markedEncrypted) {
+      try {
+        result[field] = svc.decryptField(result[field]);
+      } catch (err) {
+        const error = new Error(`Unable to decrypt wallet field "${field}" for wallet ${result.id || 'unknown'}`);
+        error.cause = err;
+        throw error;
+      }
     }
+    result[stateKey] = markedEncrypted ? 1 : 0;
   }
   // Normalise leaderboard_visibility back to boolean
   if (result.leaderboard_visibility !== undefined) {
@@ -48,6 +130,7 @@ function rowToWallet(row) {
 
 class Wallet {
   static async create(walletData) {
+    await ensureWalletSchema();
     const id = walletData.id || uuidv4();
     const now = new Date().toISOString();
     const record = encryptWalletFields({
@@ -61,8 +144,8 @@ class Wallet {
 
     await Database.run(
       `INSERT INTO wallets
-         (id, address, label, ownerName, notes, leaderboard_visibility, last_synced_at, last_cursor, createdAt, updatedAt, deletedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, address, label, ownerName, notes, leaderboard_visibility, last_synced_at, last_cursor, createdAt, updatedAt, deletedAt, label_encrypted, notes_encrypted)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.address,
@@ -75,6 +158,8 @@ class Wallet {
         record.createdAt,
         record.updatedAt || null,
         null,
+        record.label_encrypted ? 1 : 0,
+        record.notes_encrypted ? 1 : 0,
       ]
     );
 
@@ -82,11 +167,13 @@ class Wallet {
   }
 
   static async getAll() {
+    await ensureWalletSchema();
     const rows = await Database.all('SELECT * FROM wallets WHERE deletedAt IS NULL');
     return rows.map(rowToWallet);
   }
 
   static async getById(id) {
+    await ensureWalletSchema();
     const row = await Database.get(
       'SELECT * FROM wallets WHERE id = ? AND deletedAt IS NULL',
       [String(id)]
@@ -95,6 +182,7 @@ class Wallet {
   }
 
   static async getByAddress(address) {
+    await ensureWalletSchema();
     const row = await Database.get(
       'SELECT * FROM wallets WHERE address = ? AND deletedAt IS NULL',
       [address]
@@ -103,11 +191,13 @@ class Wallet {
   }
 
   static async getAllDeleted() {
+    await ensureWalletSchema();
     const rows = await Database.all('SELECT * FROM wallets WHERE deletedAt IS NOT NULL');
     return rows.map(rowToWallet);
   }
 
   static async update(id, updates) {
+    await ensureWalletSchema();
     const existing = await this.getById(id);
     if (!existing) return null;
 
@@ -120,7 +210,7 @@ class Wallet {
     await Database.run(
       `UPDATE wallets SET
          label = ?, ownerName = ?, notes = ?, leaderboard_visibility = ?,
-         last_synced_at = ?, last_cursor = ?, updatedAt = ?
+         last_synced_at = ?, last_cursor = ?, updatedAt = ?, label_encrypted = ?, notes_encrypted = ?
        WHERE id = ? AND deletedAt IS NULL`,
       [
         merged.label || null,
@@ -130,6 +220,8 @@ class Wallet {
         merged.last_synced_at || null,
         merged.last_cursor || null,
         merged.updatedAt,
+        merged.label_encrypted ? 1 : 0,
+        merged.notes_encrypted ? 1 : 0,
         String(id),
       ]
     );
@@ -138,6 +230,7 @@ class Wallet {
   }
 
   static async softDelete(id) {
+    await ensureWalletSchema();
     const result = await Database.run(
       'UPDATE wallets SET deletedAt = ? WHERE id = ? AND deletedAt IS NULL',
       [new Date().toISOString(), String(id)]
@@ -147,6 +240,7 @@ class Wallet {
 
   /** Test helper — wipe all wallet data. */
   static async _clearAllData() {
+    await ensureWalletSchema();
     await Database.run('DELETE FROM wallets');
   }
 }
