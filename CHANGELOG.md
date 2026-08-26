@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MockStellarServiceStub`: thin (<200 line) configurable stub implementing `StellarServiceInterface` for unit tests (#756)
 - `npm run changelog` script to generate changelog entries from conventional commits (#761)
 - Container security documentation in `docs/CONTAINER_SECURITY.md` (#1233)
+- Comprehensive startup configuration validation in `src/utils/startupChecks.js` (#1234):
+  - Horizon URL format and protocol policy (HTTPS required in production)
+  - Database path existence/writability (respects `DB_PATH`) plus permission warnings
+  - Stellar signing-key format validation (`SERVICE_SECRET_KEY`, `STELLAR_SECRET`, `SERVICE_SIGNING_KEY`, `SPONSOR_SECRET`)
+  - Numeric range validation for DB/Horizon pool sizes and timeouts
+  - Mutually-exclusive / co-required flag validation (`SIGNING_PROVIDER`→HSM/KMS creds, `REQUIRE_REQUEST_SIGNING`→`REQUEST_SIGNING_SECRET`, `RATE_LIMIT_STORE=redis`→`REDIS_URL`, `ENCRYPTION_KEY_VERSION=1`→`ENCRYPTION_KEY_1`)
+  - Boot sequence (`src/app.js`) now runs the checks with `exitOnFailure` before binding the port
+- Fix `isBlockedIPv4` in `src/utils/ssrf.js` so private/link-local ranges with the high bit set (e.g. `192.168.0.0/16`, `172.16.0.0/12`, `169.254.0.0/16`) are actually blocked (#1119)
 
 ---
 
