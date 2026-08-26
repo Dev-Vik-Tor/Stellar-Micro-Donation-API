@@ -21,9 +21,33 @@
 
 const fs = require('fs');
 const path = require('path');
-const glob = require('glob');
 
 const srcDir = path.join(__dirname, '../src');
+
+/**
+ * Recursively find all .js files in a directory.
+ */
+function findJsFiles(dir, excludePatterns = []) {
+  let files = [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+
+    // Skip excluded patterns
+    if (excludePatterns.some(p => p.test(fullPath))) {
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      files = files.concat(findJsFiles(fullPath, excludePatterns));
+    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
 
 // Patterns that indicate a value is likely monetary
 const MONETARY_PATTERNS = [
@@ -144,12 +168,12 @@ function scanFile(filePath) {
  * Main function.
  */
 async function main() {
-  const files = glob.sync(`${srcDir}/**/*.js`, {
-    ignore: [
-      ...SKIP_PATTERNS.map(p => `${srcDir}/**/*${p}`),
-      `${srcDir}/node_modules/**`,
-    ],
-  });
+  const excludePatterns = [
+    ...SKIP_PATTERNS,
+    /node_modules/,
+  ];
+
+  const files = findJsFiles(srcDir, excludePatterns);
 
   let totalIssues = 0;
   const issuesByFile = {};
