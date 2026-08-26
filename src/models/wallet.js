@@ -47,7 +47,9 @@ async function ensureWalletSchema() {
         updatedAt TEXT,
         deletedAt TEXT,
         label_encrypted INTEGER DEFAULT 0,
-        notes_encrypted INTEGER DEFAULT 0
+        notes_encrypted INTEGER DEFAULT 0,
+        donation_limit_min INTEGER,
+        donation_limit_max INTEGER
       )
     `);
 
@@ -59,6 +61,12 @@ async function ensureWalletSchema() {
     }
     if (!existingColumns.has('notes_encrypted')) {
       await Database.run('ALTER TABLE wallets ADD COLUMN notes_encrypted INTEGER DEFAULT 0');
+    }
+    if (!existingColumns.has('donation_limit_min')) {
+      await Database.run('ALTER TABLE wallets ADD COLUMN donation_limit_min INTEGER');
+    }
+    if (!existingColumns.has('donation_limit_max')) {
+      await Database.run('ALTER TABLE wallets ADD COLUMN donation_limit_max INTEGER');
     }
 
     _schemaReady = true;
@@ -144,8 +152,8 @@ class Wallet {
 
     await Database.run(
       `INSERT INTO wallets
-         (id, address, label, ownerName, notes, leaderboard_visibility, last_synced_at, last_cursor, createdAt, updatedAt, deletedAt, label_encrypted, notes_encrypted)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, address, label, ownerName, notes, leaderboard_visibility, last_synced_at, last_cursor, createdAt, updatedAt, deletedAt, label_encrypted, notes_encrypted, donation_limit_min, donation_limit_max)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.address,
@@ -160,6 +168,8 @@ class Wallet {
         null,
         record.label_encrypted ? 1 : 0,
         record.notes_encrypted ? 1 : 0,
+        record.donation_limit_min || null,
+        record.donation_limit_max || null,
       ]
     );
 
@@ -210,7 +220,8 @@ class Wallet {
     await Database.run(
       `UPDATE wallets SET
          label = ?, ownerName = ?, notes = ?, leaderboard_visibility = ?,
-         last_synced_at = ?, last_cursor = ?, updatedAt = ?, label_encrypted = ?, notes_encrypted = ?
+         last_synced_at = ?, last_cursor = ?, updatedAt = ?, label_encrypted = ?, notes_encrypted = ?,
+         donation_limit_min = ?, donation_limit_max = ?
        WHERE id = ? AND deletedAt IS NULL`,
       [
         merged.label || null,
@@ -222,6 +233,8 @@ class Wallet {
         merged.updatedAt,
         merged.label_encrypted ? 1 : 0,
         merged.notes_encrypted ? 1 : 0,
+        merged.donation_limit_min || null,
+        merged.donation_limit_max || null,
         String(id),
       ]
     );

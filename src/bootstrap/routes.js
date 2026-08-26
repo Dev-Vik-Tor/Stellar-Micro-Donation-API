@@ -85,6 +85,7 @@ const ADMIN_ROUTES = [
   ['/admin/routing',                  require('../routes/admin/routing')],
   ['/admin/traces',                   require('../routes/admin/traces')],
   ['/admin/wallets',                  require('../routes/admin/walletLimits')],
+  ['/admin/wallets',                  require('../routes/admin/walletDonationLimits')],
   ['/admin/webhooks',                 require('../routes/admin/webhooks')],
 ];
 
