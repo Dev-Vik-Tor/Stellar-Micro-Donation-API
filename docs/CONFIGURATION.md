@@ -38,7 +38,8 @@ application. Variables are grouped by concern. For each variable the table shows
 21. [Miscellaneous / Feature Config](#21-miscellaneous--feature-config)
 22. [Unsafe Development Flags](#22-unsafe-development-flags)
 23. [Secret Strength Requirements](#23-secret-strength-requirements)
-24. [SSRF Protection](#24-ssrf-protection)
+24. [Startup Configuration Validation](#24-startup-configuration-validation-1234)
+25. [SSRF Protection](#25-ssrf-protection)
 
 ---
 
@@ -465,7 +466,45 @@ npm run generate-key
 
 ---
 
-## 24. SSRF Protection
+## 24. Startup Configuration Validation (#1234)
+
+`npm start` runs `npm run validate-env` (and the boot sequence in `src/app.js` runs the
+same checks again with `exitOnFailure`) before the HTTP port is bound. Invalid or missing
+**required** configuration aborts startup with a non-zero exit code and a message naming
+the offending variable; misconfigured **optional** configuration logs a `⚠ WARN` and starts
+with defaults.
+
+### Hard failures (startup aborts)
+
+| Variable / condition | Expectation |
+|---|---|
+| `ENCRYPTION_KEY` | exactly 64 hexadecimal characters, not a placeholder in production |
+| `API_KEYS` | at least one non-empty key |
+| `HORIZON_URL` (when set) | a valid `http(s)` URL; **HTTPS required in production** |
+| `DB_PATH` (effective) | parent directory exists and is writable; file readable/writable when present |
+| `SERVICE_SECRET_KEY` / `SERVICE_SIGNING_KEY` / `STELLAR_SECRET` / `SPONSOR_SECRET` (when set) | valid Stellar secret key format (`S` + 55 base32 chars) |
+| `DB_POOL_SIZE`, `DB_POOL_MIN`, `DB_POOL_MAX`, `DB_ACQUIRE_TIMEOUT`, `DB_QUERY_TIMEOUT_MS`, `SLOW_QUERY_THRESHOLD_MS`, `SLOW_QUERY_BUFFER_SIZE` | positive (or non-negative where noted) integers — the SQLite pool hard-throws on invalid values |
+| `PORT` | integer between 1 and 65535 |
+| `SIGNING_PROVIDER` | one of `local`, `hsm`, `kms`; `hsm` requires `HSM_SLOT_ID` + `HSM_PIN`; `kms` requires `KMS_PROVIDER` + `KMS_KEY_ID` |
+| `REQUIRE_REQUEST_SIGNING=true` | `REQUEST_SIGNING_SECRET` must be set |
+| `RATE_LIMIT_STORE=redis` | `REDIS_URL` must be set |
+| `ENCRYPTION_KEY_VERSION=1` | `ENCRYPTION_KEY_1` must be set |
+| Unsafe flags in production (`DISABLE_RATE_LIMIT`, `CORS_ALLOW_ALL`, `DEBUG_MODE`, `DRY_RUN`) | must be `false` |
+
+### Warnings (startup continues)
+
+- `HORIZON_URL` override that does not match the canonical URL for the configured network
+- Database directory/file permission hygiene (recommended `0700` / `0600`)
+- Missing Stellar signing keys in production on a live network
+- Horizon tuning knobs out of range (`HORIZON_POOL_SIZE`, timeouts, retry/circuit-breaker settings)
+- Incoherent pool ranges (`DB_POOL_MIN > DB_POOL_MAX`)
+- `MOCK_STELLAR=true` in production
+- `STELLAR_ENVIRONMENT` and `STELLAR_NETWORK` set to different values
+- Secrets absent in production (`EXPORT_SIGNING_SECRET`, `ANONYMOUS_DONATION_SECRET`, `JWT_SECRET`)
+
+---
+
+## 25. SSRF Protection
 
 All outbound HTTP requests (webhooks, IPFS pinning, federation lookups) are validated by
 `src/utils/ssrf.js` before the connection is made. The validator:

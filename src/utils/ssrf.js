@@ -36,7 +36,10 @@ function ipv4ToInt(ip) {
 
 function isBlockedIPv4(ip) {
   const ipInt = ipv4ToInt(ip);
-  return BLOCKED_IPV4_CIDRS.some(([net, mask]) => (ipInt & mask) === net);
+  // The bitwise AND yields a signed 32-bit value for networks with the high bit
+  // set (e.g. 192.168.0.0/16, 172.16.0.0/12); coerce back to unsigned so the
+  // comparison with the unsigned network address is correct.
+  return BLOCKED_IPV4_CIDRS.some(([net, mask]) => ((ipInt & mask) >>> 0) === net);
 }
 
 function isBlockedIPv6(ip) {

@@ -60,8 +60,12 @@ function checkEncryptionKey() {
   }
   const trimmedKey = key.trim();
   
-  if (trimmedKey.length !== 64) {
-    fail('ENCRYPTION_KEY', `must be exactly 64 hex characters (32 bytes), got ${trimmedKey.length} — run 'npm run generate-key'`);
+  if (trimmedKey.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(trimmedKey)) {
+    fail(
+      'ENCRYPTION_KEY',
+      `must be exactly 64 hex characters — 64 hexadecimal digits (32 bytes) — got ${trimmedKey.length} chars. ` +
+      `Run 'npm run generate-key'`
+    );
     return false;
   }
 
@@ -78,7 +82,7 @@ function checkEncryptionKey() {
     }
   }
 
-  pass('ENCRYPTION_KEY', isProduction ? 'set and valid (production)' : 'set and valid');
+  pass('ENCRYPTION_KEY', isProduction ? 'set and valid (production, 64 hex chars)' : 'set and valid (64 hex chars)');
   return true;
 }
 
@@ -261,6 +265,57 @@ function checkCorsConfig() {
   return true;
 }
 
+/** Check — Horizon URL format and reachability policy (#1234) */
+function checkHorizonUrl() {
+  const raw = process.env.HORIZON_URL;
+  if (!raw || !raw.trim()) {
+    pass('HORIZON_URL', 'not set — using the default URL for the configured Stellar network');
+    return true;
+  }
+  const value = raw.trim();
+
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (_) {
+    fail('HORIZON_URL', `must be a valid URL — got "${value}" (e.g. https://horizon-testnet.stellar.org)`);
+    return false;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    fail('HORIZON_URL', `must use http(s) — got "${parsed.protocol}//" in "${value}"`);
+    return false;
+  }
+
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (isProduction && parsed.protocol !== 'https:') {
+    fail('HORIZON_URL', `must use https in production — got "${parsed.protocol}//" (plaintext Horizon traffic is insecure)`);
+    return false;
+  }
+
+  // Warn when the override does not match the canonical URL for the active network.
+  let expected = null;
+  try {
+    const { environments } = require('../config/stellarEnvironments');
+    const rawEnv = (process.env.STELLAR_ENVIRONMENT || 'testnet').toLowerCase();
+    const network = (process.env.STELLAR_NETWORK || rawEnv).toLowerCase();
+    expected = environments[network] ? environments[network].horizonUrl : null;
+  } catch (_) {
+    expected = null;
+  }
+
+  if (expected && expected !== value) {
+    warn(
+      'HORIZON_URL',
+      `"${value}" does not match the expected URL for the configured network ("${expected}"). ` +
+      'Ensure this is intentional — a mismatched Horizon endpoint can silently target the wrong network.'
+    );
+  } else {
+    pass('HORIZON_URL', `valid URL (${parsed.protocol.replace(':', '')})`);
+  }
+  return true;
+}
+
 /** Check 5 — Stellar network connectivity (with timeout) */
 async function checkStellarNetwork() {
   try {
@@ -288,49 +343,283 @@ async function checkStellarNetwork() {
   }
 }
 
-/** Check 5 — Database file and directory permissions (Issue #890) */
-function checkDatabasePermissions() {
-  const DATA_DIR = './data';
-  const DB_PATH = path.join(DATA_DIR, 'stellar_donations.db');
+/** Check — Database path and permissions (#890, #1234) */
+function checkDbPath() {
+  if (process.env.DB_PATH === ':memory:') {
+    pass('Database path', ':memory: — in-memory database, path checks skipped');
+    return true;
+  }
+
+  // Resolve the effective DB path the same way src/utils/database.js does.
+  const resolvedDbPath = process.env.DB_PATH
+    ? path.resolve(process.env.DB_PATH)
+    : path.join(__dirname, '../../data/stellar_donations.db');
+  const dir = path.dirname(resolvedDbPath);
+  let allOk = true;
 
   try {
-    // Check data directory permissions
-    if (fs.existsSync(DATA_DIR)) {
-      const dirStats = fs.statSync(DATA_DIR);
-      const dirMode = dirStats.mode & parseInt('777', 8);
-      
+    // Parent directory must exist — SQLite cannot create a file in a missing dir.
+    if (!fs.existsSync(dir)) {
+      fail(
+        'Database path',
+        `DB_PATH directory "${dir}" does not exist — create it (e.g. mkdir -p "${dir}") or set DB_PATH to an existing directory`
+      );
+      allOk = false;
+    } else {
+      try {
+        fs.accessSync(dir, fs.constants.W_OK);
+      } catch (_) {
+        fail('Database path', `DB_PATH directory "${dir}" is not writable — the database file cannot be created there`);
+        allOk = false;
+      }
+    }
+
+    const fileExists = fs.existsSync(resolvedDbPath);
+    if (fileExists) {
+      try {
+        fs.accessSync(resolvedDbPath, fs.constants.R_OK | fs.constants.W_OK);
+        pass('Database path', `"${resolvedDbPath}" exists and is readable/writable`);
+      } catch (_) {
+        fail('Database path', `DB_PATH file "${resolvedDbPath}" is not readable/writable — check its permissions`);
+        allOk = false;
+      }
+    } else {
+      pass('Database path', `"${resolvedDbPath}" does not exist yet — it will be created on first use`);
+    }
+
+    // Permission hygiene (warn only — operational guidance, not fatal).
+    if (fs.existsSync(dir)) {
+      const dirMode = fs.statSync(dir).mode & parseInt('777', 8);
       if (dirMode !== parseInt('700', 8)) {
         warn(
           'Database directory permissions',
-          `${DATA_DIR} has permissions ${(dirMode).toString(8)} (should be 700). ` +
-          'Run: chmod 700 data'
+          `${dir} has permissions ${dirMode.toString(8)} (should be 700). ` +
+          `Run: chmod 700 ${dir}`
         );
       } else {
-        pass('Database directory permissions', `${DATA_DIR} is 0700 (owner only)`);
+        pass('Database directory permissions', `${dir} is 0700 (owner only)`);
       }
     }
 
-    // Check database file permissions
-    if (fs.existsSync(DB_PATH)) {
-      const fileStats = fs.statSync(DB_PATH);
-      const fileMode = fileStats.mode & parseInt('777', 8);
-      
+    if (fileExists) {
+      const fileMode = fs.statSync(resolvedDbPath).mode & parseInt('777', 8);
       if (fileMode !== parseInt('600', 8)) {
         warn(
           'Database file permissions',
-          `${DB_PATH} has permissions ${(fileMode).toString(8)} (should be 600). ` +
-          'Run: chmod 600 data/stellar_donations.db'
+          `${resolvedDbPath} has permissions ${fileMode.toString(8)} (should be 600). ` +
+          `Run: chmod 600 ${resolvedDbPath}`
         );
       } else {
-        pass('Database file permissions', `${DB_PATH} is 0600 (owner only)`);
+        pass('Database file permissions', `${resolvedDbPath} is 0600 (owner only)`);
       }
     }
 
-    return true;
+    return allOk;
   } catch (err) {
-    warn('Database permissions check', err.message);
-    return true; // Don't fail on permission check errors
+    warn('Database path check', err.message);
+    return allOk; // Never fail startup on unexpected stat/access errors
   }
+}
+
+/** Stellar signing key env vars — validated for format when present (#1234) */
+const STELLAR_SIGNING_KEY_VARS = [
+  'SERVICE_SECRET_KEY',
+  'SERVICE_SIGNING_KEY',
+  'STELLAR_SECRET',
+  'SPONSOR_SECRET',
+];
+
+/** Check — presence/validity of Stellar signing keys (#1234) */
+function checkStellarSigningKeys() {
+  const { isValidStellarSecretKey } = require('./validators');
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
+  let allOk = true;
+
+  for (const name of STELLAR_SIGNING_KEY_VARS) {
+    const val = process.env[name];
+    if (!val || !val.trim()) {
+      // Optional — only flag absence when a live network is targeted in production.
+      if (isProduction && !isMock) {
+        warn(name, `not set — service signing / SEP-10 authentication will be unavailable`);
+      }
+      continue;
+    }
+    if (!isValidStellarSecretKey(val.trim())) {
+      fail(
+        name,
+        `must be a valid Stellar secret key (56 chars: "S" followed by 55 base32 chars A-Z,2-7) — got ${val.trim().length} chars`
+      );
+      allOk = false;
+      continue;
+    }
+    pass(name, 'valid Stellar secret key format');
+  }
+
+  return allOk;
+}
+
+/**
+ * Numeric env vars with valid ranges (#1234).
+ *
+ * severity:
+ *   'fail' — the consuming layer hard-throws on an invalid value (e.g. the SQLite
+ *            pool in src/utils/database.js), so failing fast at boot with a clear
+ *            message beats an obscure failure on the first query.
+ *   'warn' — the consuming layer silently falls back to a default; optional
+ *            misconfiguration warns rather than aborts.
+ */
+const NUMERIC_ENV_CHECKS = [
+  { name: 'PORT', min: 1, max: 65535, expect: 'an integer between 1 and 65535', severity: 'fail' },
+  { name: 'DB_POOL_SIZE', min: 1, expect: 'a positive integer (SQLite connection pool size)', severity: 'fail' },
+  { name: 'DB_POOL_MIN', min: 1, expect: 'a positive integer (minimum idle SQLite connections)', severity: 'fail' },
+  { name: 'DB_POOL_MAX', min: 1, expect: 'a positive integer (maximum SQLite connections)', severity: 'fail' },
+  { name: 'DB_ACQUIRE_TIMEOUT', min: 1, expect: 'a positive integer (milliseconds)', severity: 'fail' },
+  { name: 'DB_QUERY_TIMEOUT_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'fail' },
+  { name: 'SLOW_QUERY_THRESHOLD_MS', min: 0, expect: 'a non-negative integer (milliseconds)', severity: 'fail' },
+  { name: 'SLOW_QUERY_BUFFER_SIZE', min: 1, expect: 'a positive integer', severity: 'fail' },
+  { name: 'HORIZON_POOL_SIZE', min: 1, max: 10, expect: 'an integer between 1 and 10 (per-process Horizon connections)', severity: 'warn' },
+  { name: 'HORIZON_POOL_COOLDOWN_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'HORIZON_API_TIMEOUT_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'HORIZON_SUBMIT_TIMEOUT_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'HORIZON_STREAM_TIMEOUT_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'HORIZON_MAX_RETRY_ATTEMPTS', min: 0, expect: 'a non-negative integer', severity: 'warn' },
+  { name: 'HORIZON_RETRY_BASE_DELAY_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'HORIZON_RETRY_MAX_DELAY_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'HORIZON_CB_FAILURE_THRESHOLD', min: 1, expect: 'a positive integer (consecutive failures)', severity: 'warn' },
+  { name: 'HORIZON_CB_WINDOW_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'HORIZON_CB_COOLDOWN_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'SHUTDOWN_TIMEOUT_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'SHUTDOWN_TIMEOUT', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'REQUEST_TIMEOUT_MS', min: 1, expect: 'a positive integer (milliseconds)', severity: 'warn' },
+  { name: 'MOCK_STELLAR_LATENCY_MS', min: 0, expect: 'a non-negative integer (milliseconds)', severity: 'warn' },
+];
+
+/**
+ * Check — numeric ranges for pool sizes and timeouts (#1234).
+ * Values whose consumer hard-throws are hard failures; values whose consumer
+ * silently falls back to a default produce a warning instead.
+ */
+function checkNumericRanges() {
+  let allOk = true;
+
+  for (const { name, min, max, expect, severity } of NUMERIC_ENV_CHECKS) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || String(raw).trim() === '') continue;
+    const value = String(raw).trim();
+
+    const report = (status, detail) => {
+      if (status === 'fail') {
+        fail(name, detail);
+        allOk = false;
+      } else {
+        warn(name, detail);
+      }
+    };
+
+    if (!/^-?\d+$/.test(value)) {
+      report(severity, `must be ${expect} — got "${value}"`);
+      continue;
+    }
+
+    const num = parseInt(value, 10);
+    if (num < min || (max !== undefined && num > max)) {
+      report(severity, `must be ${expect} — got ${num}`);
+      continue;
+    }
+
+    // Coherence checks between related variables (always warnings — both values
+    // are individually valid, the combination is just incoherent).
+    if (name === 'DB_POOL_MIN' && process.env.DB_POOL_MAX !== undefined &&
+        num > parseInt(process.env.DB_POOL_MAX, 10)) {
+      warn('DB_POOL_MIN', `must be <= DB_POOL_MAX (${process.env.DB_POOL_MAX}) — got ${num}`);
+      continue;
+    }
+    if (name === 'DB_POOL_MAX' && process.env.DB_POOL_MIN !== undefined &&
+        num < parseInt(process.env.DB_POOL_MIN, 10)) {
+      warn('DB_POOL_MAX', `must be >= DB_POOL_MIN (${process.env.DB_POOL_MIN}) — got ${num}`);
+      continue;
+    }
+    if (name === 'HORIZON_RETRY_MAX_DELAY_MS' && process.env.HORIZON_RETRY_BASE_DELAY_MS !== undefined &&
+        num < parseInt(process.env.HORIZON_RETRY_BASE_DELAY_MS, 10)) {
+      warn('HORIZON_RETRY_MAX_DELAY_MS', `must be >= HORIZON_RETRY_BASE_DELAY_MS (${process.env.HORIZON_RETRY_BASE_DELAY_MS}) — got ${num}`);
+      continue;
+    }
+  }
+  return allOk;
+}
+
+/** Check — mutually-exclusive / co-required flags (#1234) */
+function checkCoRequiredFlags() {
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  let allOk = true;
+
+  // SIGNING_PROVIDER must be a known backend and carry its required credentials.
+  const signingProvider = (process.env.SIGNING_PROVIDER || 'local').toLowerCase();
+  if (!['local', 'hsm', 'kms'].includes(signingProvider)) {
+    fail('SIGNING_PROVIDER', `must be one of: local, hsm, kms — got "${process.env.SIGNING_PROVIDER}"`);
+    allOk = false;
+  } else if (signingProvider === 'hsm') {
+    if (!process.env.HSM_SLOT_ID || !process.env.HSM_PIN) {
+      fail('SIGNING_PROVIDER', 'SIGNING_PROVIDER=hsm requires HSM_SLOT_ID and HSM_PIN to be set');
+      allOk = false;
+    } else {
+      pass('SIGNING_PROVIDER', 'hsm configured (HSM_SLOT_ID and HSM_PIN present)');
+    }
+  } else if (signingProvider === 'kms') {
+    if (!process.env.KMS_PROVIDER || !process.env.KMS_KEY_ID) {
+      fail('SIGNING_PROVIDER', 'SIGNING_PROVIDER=kms requires KMS_PROVIDER and KMS_KEY_ID to be set');
+      allOk = false;
+    } else {
+      pass('SIGNING_PROVIDER', 'kms configured (KMS_PROVIDER and KMS_KEY_ID present)');
+    }
+  } else {
+    pass('SIGNING_PROVIDER', 'local (in-process signing)');
+  }
+
+  // REQUIRE_REQUEST_SIGNING=true needs the HMAC secret to verify signatures.
+  if (process.env.REQUIRE_REQUEST_SIGNING === 'true' && !process.env.REQUEST_SIGNING_SECRET) {
+    fail('REQUIRE_REQUEST_SIGNING', '=true requires REQUEST_SIGNING_SECRET to be set — inbound request signatures cannot be verified without it');
+    allOk = false;
+  }
+
+  // RATE_LIMIT_STORE=redis needs a Redis connection URL.
+  const rateLimitStore = (process.env.RATE_LIMIT_STORE || 'memory').toLowerCase();
+  if (!['memory', 'redis'].includes(rateLimitStore)) {
+    fail('RATE_LIMIT_STORE', `must be one of: memory, redis — got "${process.env.RATE_LIMIT_STORE}"`);
+    allOk = false;
+  } else if (rateLimitStore === 'redis') {
+    if (!process.env.REDIS_URL) {
+      fail('RATE_LIMIT_STORE', '=redis requires REDIS_URL to be set — rate-limit counters have no backing store');
+      allOk = false;
+    } else {
+      pass('RATE_LIMIT_STORE', 'redis configured (REDIS_URL present)');
+    }
+  }
+
+  // ENCRYPTION_KEY_VERSION=1 requires the previous key for rotation.
+  if (process.env.ENCRYPTION_KEY_VERSION === '1' && !process.env.ENCRYPTION_KEY_1) {
+    fail('ENCRYPTION_KEY_VERSION', '=1 requires ENCRYPTION_KEY_1 (the previous key) to be set — key rotation cannot start without it');
+    allOk = false;
+  }
+
+  // Mocking Stellar in production means no real transactions — dangerous for a payments service.
+  const isMock = process.env.MOCK_STELLAR === 'true' || process.env.USE_MOCK_STELLAR === 'true';
+  if (isProduction && isMock) {
+    warn('MOCK_STELLAR', '=true in production — no real Stellar transactions will be sent; disable it before deploying');
+  }
+
+  // STELLAR_ENVIRONMENT and STELLAR_NETWORK disagreeing is confusing; STELLAR_NETWORK wins.
+  if (process.env.STELLAR_ENVIRONMENT && process.env.STELLAR_NETWORK &&
+      process.env.STELLAR_ENVIRONMENT.toLowerCase() !== process.env.STELLAR_NETWORK.toLowerCase()) {
+    warn(
+      'STELLAR_ENVIRONMENT',
+      `"${process.env.STELLAR_ENVIRONMENT}" differs from STELLAR_NETWORK "${process.env.STELLAR_NETWORK}" — ` +
+      'STELLAR_NETWORK takes precedence; set both to the same value to avoid confusion'
+    );
+  }
+
+  return allOk;
 }
 
 /**
@@ -387,11 +676,15 @@ async function run({ exitOnFailure = false } = {}) {
     corsOk,
     checkEncryptionKey(),
     checkApiKeys(),
-    checkSecretStrength(),   // #1117
-    checkUnsafeFlags(),      // #1116
+    checkSecretStrength(),      // #1117
+    checkUnsafeFlags(),         // #1116
+    checkHorizonUrl(),          // #1234
+    checkDbPath(),              // #890, #1234
+    checkStellarSigningKeys(),  // #1234
+    checkNumericRanges(),       // #1234
+    checkCoRequiredFlags(),     // #1234
     await checkDatabase(),
     await checkStellarNetwork(),
-    checkDatabasePermissions(),
   ];
 
   // Non-blocking DB integrity check — log result but never fail startup

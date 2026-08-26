@@ -79,7 +79,25 @@ process.on('uncaughtException', (error) => {
 });
 
 if (require.main === module) {
-  require('./bootstrap/server').startServer(app);
+  const boot = () => require('./bootstrap/server').startServer(app);
+
+  // #1234: fail fast on misconfiguration before binding the port. `run()` calls
+  // process.exit(1) itself when any hard-required check fails, so startServer
+  // only runs once every check has passed. Test mode skips the gate, matching
+  // the config layer (src/config/index.js) which skips validation for tests.
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'test') {
+    boot();
+  } else {
+    require('./utils/startupChecks')
+      .run({ exitOnFailure: true })
+      .then(boot)
+      .catch((err) => {
+        log.error('STARTUP', 'Startup checks threw an unexpected error', {
+          error: err && err.message ? err.message : String(err),
+        });
+        process.exit(1);
+      });
+  }
 }
 
 module.exports = app;
