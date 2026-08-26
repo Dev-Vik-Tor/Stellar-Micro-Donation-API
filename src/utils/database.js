@@ -538,6 +538,32 @@ class Database {
   }
 
   /**
+   * Query database pragmas to report active journal mode and sync settings.
+   * Used for startup diagnostics (#1483).
+   *
+   * @returns {Promise<{journalMode: string, synchronous: string, autoVacuum: string}>} Pragma values.
+   */
+  static async getDiagnosticPragmas() {
+    try {
+      const journalRow = await this.get('PRAGMA journal_mode');
+      const syncRow = await this.get('PRAGMA synchronous');
+      const vacuumRow = await this.get('PRAGMA auto_vacuum');
+
+      return {
+        journalMode: journalRow?.journal_mode || 'UNKNOWN',
+        synchronous: syncRow?.synchronous || 'UNKNOWN',
+        autoVacuum: vacuumRow?.auto_vacuum || 'UNKNOWN',
+      };
+    } catch (err) {
+      return {
+        journalMode: 'ERROR',
+        synchronous: 'ERROR',
+        autoVacuum: 'ERROR',
+      };
+    }
+  }
+
+  /**
    * Ensure the pool is initialized exactly once.
    *
    * @returns {Promise<void>} Resolves when initialization completes.

@@ -140,6 +140,33 @@ async function checkDatabase() {
   }
 }
 
+/** Check 3b — Database configuration and WAL mode diagnostics (#1483) */
+async function checkDatabaseDiagnostics() {
+  try {
+    const pragmas = await Database.getDiagnosticPragmas();
+
+    const journalMode = (pragmas.journalMode || 'UNKNOWN').toUpperCase();
+    const synchronous = (pragmas.synchronous || 'UNKNOWN').toString();
+
+    if (journalMode === 'WAL') {
+      pass('Database WAL mode', 'enabled (concurrent reads during writes)');
+    } else if (journalMode === 'ERROR') {
+      warn('Database WAL mode', 'could not query pragma — unable to verify mode');
+    } else {
+      warn('Database WAL mode', `${journalMode} mode active (not WAL) — concurrency may be reduced; enable PRAGMA journal_mode=WAL for better performance`);
+    }
+
+    const poolStatus = Database.getPoolStatus();
+    const poolInfo = `pool size=${poolStatus.poolSize}, min=${poolStatus.poolMin}, max=${poolStatus.poolMax}`;
+    pass('Database pool', poolInfo);
+
+    return true;
+  } catch (err) {
+    warn('Database diagnostics', `could not query settings: ${err.message}`);
+    return true;
+  }
+}
+
 /** Secrets that must each be >= 32 bytes (64 hex chars or 32+ raw chars) */
 const SIGNING_SECRETS = [
   'EXPORT_SIGNING_SECRET',
@@ -684,6 +711,7 @@ async function run({ exitOnFailure = false } = {}) {
     checkNumericRanges(),       // #1234
     checkCoRequiredFlags(),     // #1234
     await checkDatabase(),
+    await checkDatabaseDiagnostics(), // #1483
     await checkStellarNetwork(),
   ];
 
